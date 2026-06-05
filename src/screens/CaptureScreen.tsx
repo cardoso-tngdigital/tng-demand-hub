@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { createDemand } from "../lib/demands";
 
 export function CaptureScreen() {
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-foco no input ao abrir
@@ -16,6 +18,7 @@ export function CaptureScreen() {
 
   async function closeWindow() {
     setText("");
+    setError(null);
     try {
       await invoke("hide_capture_window");
     } catch (err) {
@@ -30,9 +33,20 @@ export function CaptureScreen() {
       return;
     }
     setSubmitting(true);
-    // TODO Sprint 3: enviar para Supabase + IA. Por enquanto só faz log e fecha.
-    console.log("[Capture] Texto:", trimmed);
+    setError(null);
+
+    const { error } = await createDemand({
+      description: trimmed,
+      captured_via: "hotkey",
+    });
+
     setSubmitting(false);
+
+    if (error) {
+      setError(error);
+      return;
+    }
+
     await closeWindow();
   }
 
@@ -50,9 +64,7 @@ export function CaptureScreen() {
 
   return (
     <div className="flex h-screen items-center justify-center bg-tng-marine-900 p-0">
-      <div
-        className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700"
-      >
+      <div className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700">
         <div
           data-tauri-drag-region
           className="flex items-center justify-between border-b border-tng-marine-600/60 px-5 py-3"
@@ -73,8 +85,14 @@ export function CaptureScreen() {
           onKeyDown={handleKeyDown}
           placeholder="O que precisa ser feito? Descreva a demanda…"
           disabled={submitting}
-          className="flex-1 resize-none bg-transparent px-5 py-4 text-sm leading-relaxed text-tng-marine-50 placeholder:text-tng-marine-300 focus:outline-none"
+          className="flex-1 resize-none bg-transparent px-5 py-4 text-sm leading-relaxed text-tng-marine-50 placeholder:text-tng-marine-300 focus:outline-none disabled:opacity-60"
         />
+
+        {error && (
+          <div className="border-t border-red-500/20 bg-red-500/10 px-5 py-2 text-xs text-red-300">
+            {error}
+          </div>
+        )}
 
         <div className="flex items-center justify-between border-t border-tng-marine-600/60 bg-tng-marine-800/40 px-5 py-3">
           <span className="text-[11px] text-tng-marine-300">
@@ -87,7 +105,7 @@ export function CaptureScreen() {
             disabled={submitting || text.trim().length === 0}
             className="rounded-md bg-tng-orange-400 px-3 py-1.5 text-xs font-semibold text-tng-marine-900 transition hover:bg-tng-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? "Enviando…" : "Enviar"}
+            {submitting ? "Salvando…" : "Enviar"}
           </button>
         </div>
       </div>

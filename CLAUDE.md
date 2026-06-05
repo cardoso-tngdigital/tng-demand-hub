@@ -163,23 +163,35 @@ supabase link --project-ref rczvkarulymulmkxolez   # Linka ao projeto remoto
 ### Sprint 2 — concluído
 
 - [x] Plugin `tauri-plugin-global-shortcut` integrado
-- [x] Janela `capture` declarada no `tauri.conf.json` (transparent, alwaysOnTop, sem decorations)
+- [x] Janela `capture` no `tauri.conf.json` (alwaysOnTop, sem decorations)
 - [x] Atalho `CmdOrCtrl+Shift+D` registrado no setup do Rust
 - [x] Tray icon com menu (Abrir / Nova captura / Sair) via `TrayIconBuilder`
 - [x] Comando Rust `hide_capture_window` invocável do frontend
 - [x] `CaptureScreen` com auto-focus, atalhos `Enter` (envia) e `Esc` (fecha)
 - [x] Roteamento por window label no `App.tsx` (`main` vs `capture`)
-- [x] `body` com background transparente (cores aplicadas por tela)
+- [x] Plugin SWC no lugar do plugin Babel (sem dependência de caniuse-lite)
+- [x] Vite forçado em IPv4 para evitar timeout no macOS
 
-## Próximo: Sprint 3 — Captura Salva no Supabase
+### Sprint 3 — concluído
+
+- [x] Tabelas `clients`, `demands`, `activity_log` com RLS e índices
+- [x] Realtime habilitado em `demands` e `activity_log`
+- [x] Seed inicial com 2 clientes placeholder
+- [x] Tipos TypeScript em `src/types/database.ts`
+- [x] Helpers `createDemand`, `listDemands`, `subscribeToDemands` em `src/lib/demands.ts`
+- [x] `CaptureScreen` salva no Supabase com `captured_via='hotkey'`
+- [x] `DashboardScreen` (substitui Welcome) com lista, stats e indicador realtime ao vivo
+- [x] Roteamento atualizado para usar Dashboard
+
+## Próximo: Sprint 4 — Integração com Gemini (IA Extratora)
 
 Ver seção 11.2 do PRD. Entregas previstas:
 
-- Tabela `demands` com RLS.
-- Tabela `clients` e seed inicial.
-- Captura simples (texto puro, sem IA) salva como demanda.
-- Dashboard listando demandas em tempo real.
-- Activity log básico.
+- Edge Function `extract-demand` no Supabase chamando Gemini 2.0 Flash.
+- Prompt v1 do extrator (ver seção 9.2 do PRD).
+- Validação do JSON retornado e fallback para captura manual.
+- Tela de confirmação editável com campos extraídos.
+- Tabela `ai_usage_log` para controle de custo.
 
 ## Regras para você (Claude Code)
 

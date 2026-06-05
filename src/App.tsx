@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { LoginScreen } from "./screens/LoginScreen";
-import { WelcomeScreen } from "./screens/WelcomeScreen";
+import { DashboardScreen } from "./screens/DashboardScreen";
 import { CaptureScreen } from "./screens/CaptureScreen";
 
 function MainApp() {
@@ -15,7 +15,7 @@ function MainApp() {
     );
   }
 
-  return session ? <WelcomeScreen /> : <LoginScreen />;
+  return session ? <DashboardScreen /> : <LoginScreen />;
 }
 
 function App() {
