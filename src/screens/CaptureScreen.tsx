@@ -1,7 +1,23 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { createDemand } from "../lib/demands";
 import { extractDemand, type ExtractedDemand } from "../lib/ai";
+import {
+  buildPendingAttachment,
+  categoryIcon,
+  disposePending,
+  formatBytes,
+  uploadAttachment,
+  type PendingAttachment,
+} from "../lib/attachments";
 import type { DemandPriority } from "../types/database";
 
 type Mode = "input" | "confirm";
@@ -9,12 +25,50 @@ type Mode = "input" | "confirm";
 export function CaptureScreen() {
   const [mode, setMode] = useState<Mode>("input");
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [extracted, setExtracted] = useState<ExtractedDemand | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Garante que object URLs criados para preview sejam liberados na desmontagem.
+  useEffect(() => {
+    return () => {
+      attachments.forEach(disposePending);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (list.length === 0) return;
+    setError(null);
+    const errors: string[] = [];
+    const accepted: PendingAttachment[] = [];
+    for (const f of list) {
+      const result = buildPendingAttachment(f);
+      if ("error" in result) errors.push(`${f.name}: ${result.error}`);
+      else accepted.push(result);
+    }
+    if (accepted.length > 0) {
+      setAttachments((prev) => [...prev, ...accepted]);
+    }
+    if (errors.length > 0) {
+      setError(errors.join(" · "));
+    }
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const found = prev.find((p) => p.id === id);
+      if (found) disposePending(found);
+      return prev.filter((p) => p.id !== id);
+    });
+  }, []);
+
   async function closeWindow() {
+    attachments.forEach(disposePending);
     setText("");
+    setAttachments([]);
     setExtracted(null);
     setError(null);
     setMode("input");
@@ -28,8 +82,12 @@ export function CaptureScreen() {
 
   async function runExtraction() {
     const trimmed = text.trim();
-    if (!trimmed) {
+    if (!trimmed && attachments.length === 0) {
       await closeWindow();
+      return;
+    }
+    if (!trimmed) {
+      setError("Adicione um texto descrevendo a captura.");
       return;
     }
     setBusy(true);
@@ -41,24 +99,44 @@ export function CaptureScreen() {
 
     if (!result.ok) {
       setError(result.error);
-      return; // mantém modo input, usuário pode salvar manualmente
+      return;
     }
 
     setExtracted(result.extracted);
     setMode("confirm");
   }
 
+  /**
+   * Faz upload de cada anexo pendente em paralelo. Retorna mensagens de erro
+   * dos uploads que falharam; a demanda em si já está salva.
+   */
+  async function uploadAll(demandId: string, userId: string): Promise<string[]> {
+    if (attachments.length === 0) return [];
+    const results = await Promise.all(
+      attachments.map((a) => uploadAttachment(a, demandId, userId)),
+    );
+    return results
+      .map((r, i) => (r.ok ? null : `${attachments[i].file.name}: ${r.error}`))
+      .filter((m): m is string => m !== null);
+  }
+
   async function saveManual() {
     const trimmed = text.trim();
     if (!trimmed) return;
     setBusy(true);
-    const { error } = await createDemand({
+    const { data, error } = await createDemand({
       description: trimmed,
       captured_via: "hotkey",
     });
+    if (error || !data) {
+      setBusy(false);
+      setError(error ?? "Falha ao salvar demanda.");
+      return;
+    }
+    const uploadErrors = await uploadAll(data.id, data.created_by);
     setBusy(false);
-    if (error) {
-      setError(error);
+    if (uploadErrors.length > 0) {
+      setError(`Demanda salva, mas falhou: ${uploadErrors.join(" · ")}`);
       return;
     }
     await closeWindow();
@@ -68,7 +146,7 @@ export function CaptureScreen() {
     setBusy(true);
     setError(null);
 
-    const { error } = await createDemand({
+    const { data, error } = await createDemand({
       description: final.descricao,
       title: final.descricao.slice(0, 80),
       priority: final.prioridade,
@@ -77,9 +155,16 @@ export function CaptureScreen() {
       captured_via: "hotkey",
     });
 
+    if (error || !data) {
+      setBusy(false);
+      setError(error ?? "Falha ao salvar demanda.");
+      return;
+    }
+
+    const uploadErrors = await uploadAll(data.id, data.created_by);
     setBusy(false);
-    if (error) {
-      setError(error);
+    if (uploadErrors.length > 0) {
+      setError(`Demanda salva, mas falhou: ${uploadErrors.join(" · ")}`);
       return;
     }
     await closeWindow();
@@ -89,6 +174,8 @@ export function CaptureScreen() {
     return (
       <ConfirmView
         extracted={extracted}
+        attachments={attachments}
+        onRemoveAttachment={removeAttachment}
         busy={busy}
         error={error}
         onCancel={() => void closeWindow()}
@@ -105,6 +192,9 @@ export function CaptureScreen() {
     <InputView
       text={text}
       onTextChange={setText}
+      attachments={attachments}
+      onAddFiles={addFiles}
+      onRemoveAttachment={removeAttachment}
       busy={busy}
       error={error}
       onExtract={() => void runExtraction()}
@@ -121,6 +211,9 @@ export function CaptureScreen() {
 function InputView(props: {
   text: string;
   onTextChange: (v: string) => void;
+  attachments: PendingAttachment[];
+  onAddFiles: (files: FileList | File[]) => void;
+  onRemoveAttachment: (id: string) => void;
   busy: boolean;
   error: string | null;
   onExtract: () => void;
@@ -128,6 +221,8 @@ function InputView(props: {
   onManualSave: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
     const id = window.setTimeout(() => textareaRef.current?.focus(), 30);
@@ -146,9 +241,55 @@ function InputView(props: {
     }
   }
 
+  function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) {
+      e.preventDefault();
+      props.onAddFiles(files);
+    }
+  }
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    if (e.dataTransfer.types.includes("Files")) {
+      e.preventDefault();
+      setDragOver(true);
+    }
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragOver(false);
+  }
+
+  function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      props.onAddFiles(e.dataTransfer.files);
+    }
+  }
+
+  function handleFilePickerChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files && e.target.files.length > 0) {
+      props.onAddFiles(e.target.files);
+      e.target.value = ""; // permite reescolher o mesmo arquivo
+    }
+  }
+
+  const canSubmit = props.text.trim().length > 0;
+
   return (
-    <div className="flex h-screen items-center justify-center bg-tng-marine-900 p-0">
-      <div className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700">
+    <div
+      className="flex h-screen items-center justify-center bg-tng-marine-900 p-0"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <div
+        className={`flex h-full w-full flex-col overflow-hidden border bg-tng-marine-700 transition ${
+          dragOver ? "border-tng-orange-400" : "border-tng-marine-600/60"
+        }`}
+      >
         <div
           data-tauri-drag-region
           className="flex items-center justify-between border-b border-tng-marine-600/60 px-5 py-3"
@@ -167,18 +308,64 @@ function InputView(props: {
           value={props.text}
           onChange={(e) => props.onTextChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder="O que precisa ser feito? Descreva a demanda…"
           disabled={props.busy}
           className="flex-1 resize-none bg-transparent px-5 py-4 text-sm leading-relaxed text-tng-marine-50 placeholder:text-tng-marine-300 focus:outline-none disabled:opacity-60"
         />
 
+        {props.attachments.length > 0 && (
+          <ul className="max-h-32 overflow-y-auto border-t border-tng-marine-600/60 px-3 py-2 space-y-1">
+            {props.attachments.map((a) => (
+              <AttachmentRow
+                key={a.id}
+                pending={a}
+                onRemove={() => props.onRemoveAttachment(a.id)}
+              />
+            ))}
+          </ul>
+        )}
+
+        <div className="flex items-center justify-between border-t border-tng-marine-600/60 bg-tng-marine-800/40 px-5 py-2">
+          <span className="text-[11px] text-tng-marine-300">
+            {dragOver ? (
+              <span className="text-tng-orange-400">Solte para anexar…</span>
+            ) : (
+              <>📎 Cole, arraste arquivos ou{" "}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="underline-offset-2 hover:underline focus:underline focus:outline-none"
+                >
+                  escolha
+                </button>
+                {props.attachments.length > 0 && (
+                  <span className="ml-2 text-tng-marine-400">
+                    · {props.attachments.length} anexo
+                    {props.attachments.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </>
+            )}
+          </span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={handleFilePickerChange}
+          />
+        </div>
+
         {props.error && (
           <div className="border-t border-red-500/20 bg-red-500/10 px-5 py-2 text-xs text-red-300">
             <div className="flex items-center justify-between gap-3">
-              <span>IA indisponível: {props.error}</span>
+              <span>{props.error.includes("IA") || props.error.includes("Edge")
+                ? `IA indisponível: ${props.error}`
+                : props.error}</span>
               <button
                 onClick={props.onManualSave}
-                disabled={props.busy || props.text.trim().length === 0}
+                disabled={props.busy || !canSubmit}
                 className="shrink-0 rounded bg-red-500/20 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-500/30 disabled:opacity-50"
               >
                 Salvar mesmo assim
@@ -195,7 +382,7 @@ function InputView(props: {
           <button
             type="button"
             onClick={props.onExtract}
-            disabled={props.busy || props.text.trim().length === 0}
+            disabled={props.busy || !canSubmit}
             className="rounded-md bg-tng-orange-400 px-3 py-1.5 text-xs font-semibold text-tng-marine-900 transition hover:bg-tng-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {props.busy ? "Processando…" : "Processar"}
@@ -203,6 +390,42 @@ function InputView(props: {
         </div>
       </div>
     </div>
+  );
+}
+
+function AttachmentRow({
+  pending,
+  onRemove,
+}: {
+  pending: PendingAttachment;
+  onRemove: () => void;
+}) {
+  return (
+    <li className="flex items-center gap-2 rounded-md bg-tng-marine-800/60 px-2 py-1.5 text-xs">
+      {pending.previewUrl ? (
+        <img
+          src={pending.previewUrl}
+          alt=""
+          className="h-7 w-7 shrink-0 rounded object-cover"
+        />
+      ) : (
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-tng-marine-700 text-sm">
+          {categoryIcon(pending.category)}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-tng-marine-100">{pending.file.name}</p>
+        <p className="text-[10px] text-tng-marine-300">{formatBytes(pending.file.size)}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remover ${pending.file.name}`}
+        className="shrink-0 rounded p-1 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
+      >
+        ✕
+      </button>
+    </li>
   );
 }
 
@@ -219,6 +442,8 @@ const PRIORITY_OPTIONS: { value: DemandPriority; label: string }[] = [
 
 function ConfirmView(props: {
   extracted: ExtractedDemand;
+  attachments: PendingAttachment[];
+  onRemoveAttachment: (id: string) => void;
   busy: boolean;
   error: string | null;
   onBack: () => void;
@@ -362,6 +587,22 @@ function ConfirmView(props: {
               />
             </Field>
           </div>
+
+          {props.attachments.length > 0 && (
+            <div className="col-span-2">
+              <Field label={`Anexos (${props.attachments.length})`}>
+                <ul className="space-y-1">
+                  {props.attachments.map((a) => (
+                    <AttachmentRow
+                      key={a.id}
+                      pending={a}
+                      onRemove={() => props.onRemoveAttachment(a.id)}
+                    />
+                  ))}
+                </ul>
+              </Field>
+            </div>
+          )}
         </div>
 
         {props.error && (
