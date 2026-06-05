@@ -1,5 +1,6 @@
 import { supabase } from "./supabase/client";
 import type { DemandPriority } from "../types/database";
+import type { InlineAttachment } from "./attachments";
 
 export type Confianca = {
   cliente: number;
@@ -30,11 +31,15 @@ export type ExtractionResult =
   | { ok: false; error: string; fallback: boolean };
 
 /**
- * Chama a Edge Function `extract-demand` que aciona o Gemini 2.0 Flash.
- * Retorna os campos estruturados da demanda ou um erro com fallback indicando
- * que o usuário pode preencher manualmente.
+ * Chama a Edge Function `extract-demand` que aciona o Gemini 2.5 Flash.
+ * Retorna os campos estruturados da demanda (com descricao já enriquecida
+ * pelos blocos por anexo — RF-06b) ou um erro com fallback indicando que o
+ * usuário pode preencher manualmente.
  */
-export async function extractDemand(text: string): Promise<ExtractionResult> {
+export async function extractDemand(
+  text: string,
+  attachments: InlineAttachment[] = [],
+): Promise<ExtractionResult> {
   try {
     const { data, error } = await supabase.functions.invoke<{
       extracted?: ExtractedDemand;
@@ -42,7 +47,7 @@ export async function extractDemand(text: string): Promise<ExtractionResult> {
       error?: string;
       fallback?: boolean;
     }>("extract-demand", {
-      body: { text },
+      body: { text, attachments },
     });
 
     if (error) {

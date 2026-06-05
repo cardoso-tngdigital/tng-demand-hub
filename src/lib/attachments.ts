@@ -3,6 +3,11 @@ import type { Attachment } from "../types/database";
 
 export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
+// Tamanho cumulativo (bytes do arquivo original, antes do base64) dos anexos
+// enviados como inlineData à Edge Function. Mantemos margem segura abaixo do
+// limite de 12MB de base64 aceito pela função.
+export const MAX_INLINE_TOTAL_BYTES = 8 * 1024 * 1024;
+
 const ALLOWED_MIME_TYPES = new Set<string>([
   // Imagens
   "image/png",
@@ -182,6 +187,39 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** Tipos enviados como inlineData à Edge Function de extração. */
+export type InlineAttachment = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  base64: string;
+};
+
+/** Converte um File em base64 puro (sem o prefixo data:URI). */
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Falha ao ler arquivo"));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function pendingToInlinePayload(
+  pending: PendingAttachment,
+): Promise<InlineAttachment> {
+  return {
+    id: pending.id,
+    fileName: pending.file.name,
+    mimeType: pending.mime,
+    base64: await fileToBase64(pending.file),
+  };
 }
 
 export function categoryIcon(c: AttachmentCategory): string {

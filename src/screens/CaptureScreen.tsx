@@ -15,6 +15,8 @@ import {
   categoryIcon,
   disposePending,
   formatBytes,
+  MAX_INLINE_TOTAL_BYTES,
+  pendingToInlinePayload,
   uploadAttachment,
   type PendingAttachment,
 } from "../lib/attachments";
@@ -90,10 +92,29 @@ export function CaptureScreen() {
       setError("Adicione um texto descrevendo a captura.");
       return;
     }
+
+    const totalBytes = attachments.reduce((sum, a) => sum + a.file.size, 0);
+    if (totalBytes > MAX_INLINE_TOTAL_BYTES) {
+      const limitMb = Math.round(MAX_INLINE_TOTAL_BYTES / 1024 / 1024);
+      setError(
+        `Anexos somam ${(totalBytes / 1024 / 1024).toFixed(1)} MB — a IA aceita até ${limitMb} MB no total. Remova ou reduza algum.`,
+      );
+      return;
+    }
+
     setBusy(true);
     setError(null);
 
-    const result = await extractDemand(trimmed);
+    let inline;
+    try {
+      inline = await Promise.all(attachments.map(pendingToInlinePayload));
+    } catch (err) {
+      setBusy(false);
+      setError(`Falha ao preparar anexos: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+
+    const result = await extractDemand(trimmed, inline);
 
     setBusy(false);
 

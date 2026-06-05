@@ -24,8 +24,21 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Limite cumulativo (em bytes do payload base64) dos anexos inline.
+// O Supabase Edge Functions tolera bem além disso, mas mantemos margem
+// segura para latência do Gemini multimodal.
+const MAX_ATTACHMENTS_TOTAL_B64_BYTES = 12 * 1024 * 1024;
+
+type AttachmentPayload = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  base64: string;
+};
+
 type ExtractRequest = {
   text: string;
+  attachments?: AttachmentPayload[];
 };
 
 type Confianca = {
@@ -94,6 +107,21 @@ Deno.serve(async (req: Request) => {
   if (!text) return json({ error: "Texto vazio" }, 400);
   if (text.length > 4000) return json({ error: "Texto excede 4000 caracteres" }, 400);
 
+  const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+  let attachmentsBytes = 0;
+  for (const a of attachments) {
+    if (typeof a.base64 !== "string" || typeof a.mimeType !== "string" || typeof a.fileName !== "string") {
+      return json({ error: "Anexo com campos faltando" }, 400);
+    }
+    attachmentsBytes += a.base64.length;
+  }
+  if (attachmentsBytes > MAX_ATTACHMENTS_TOTAL_B64_BYTES) {
+    return json(
+      { error: `Anexos excedem o limite de ${Math.round(MAX_ATTACHMENTS_TOTAL_B64_BYTES / 1024 / 1024)} MB processáveis pela IA.` },
+      413,
+    );
+  }
+
   // -----------------------------------------------------------------------
   // 3. Monta contexto da empresa
   // -----------------------------------------------------------------------
@@ -132,7 +160,20 @@ Deno.serve(async (req: Request) => {
     membersList,
     isoDate,
     weekday,
+    attachments,
   });
+
+  // Cada anexo entra como uma parte inlineData logo após o prompt; a ordem
+  // do array é preservada e a lista enumerada no prompt usa esses mesmos índices.
+  const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+  for (const a of attachments) {
+    parts.push({
+      inlineData: {
+        mimeType: a.mimeType,
+        data: a.base64,
+      },
+    });
+  }
 
   // -----------------------------------------------------------------------
   // 4. Chama Gemini
@@ -147,10 +188,10 @@ Deno.serve(async (req: Request) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        contents: [{ role: "user", parts }],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 2048,
+          maxOutputTokens: 4096,
           responseMimeType: "application/json",
           thinkingConfig: { thinkingBudget: 0 },
         },
@@ -228,7 +269,51 @@ function buildPrompt(args: {
   membersList: string;
   isoDate: string;
   weekday: string;
+  attachments: AttachmentPayload[];
 }): string {
+  const attachmentsBlock = args.attachments.length === 0
+    ? "(nenhum anexo nesta captura)"
+    : args.attachments
+        .map((a, i) => `${i + 1}. ${a.fileName} (${a.mimeType})`)
+        .join("\n");
+
+  const enrichmentInstructions = args.attachments.length === 0
+    ? ""
+    : `
+
+4. ENRIQUECIMENTO DA DESCRIÇÃO (RF-06b) — obrigatório quando há anexos:
+
+   Os ${args.attachments.length} anexo(s) listado(s) acima vêm logo após este
+   prompt, na MESMA ORDEM. Use-os para gerar UM BLOCO por anexo, anexado ao
+   FIM do campo \`descricao\` após uma linha separadora "---". Não invente
+   anexos, não pule nenhum, e use SEMPRE o nome de arquivo informado.
+
+   Formato de cada bloco (markdown), conforme o tipo MIME do anexo:
+
+   • image/* — descrição visual breve do que aparece na imagem:
+     🖼️ {nome} — {1 frase descrevendo o conteúdo visual}
+
+   • audio/* — transcrição COMPLETA do áudio em português:
+     🎵 {nome}
+     > Transcrição: "{texto integral transcrito}"
+
+   • video/* — sinopse de 1-2 frases:
+     🎬 {nome}
+     > Sinopse: {1-2 frases resumindo o vídeo}
+
+   • application/pdf — título descritivo do conteúdo:
+     📄 {nome} — {1 frase sintetizando o documento}
+
+   Exemplo de descricao final com anexos:
+
+   Pedro precisa ajustar o banner do cliente Acme.
+
+   ---
+
+   🖼️ screenshot.png — Tela do checkout exibindo erro 500 no botão Finalizar.
+   🎵 audio.ogg
+   > Transcrição: "Oi pessoal, preciso que o banner do topo mude até quinta..."`;
+
   return `Você é um assistente da TNG Digital especializado em extrair informações
 estruturadas de capturas rápidas feitas pela equipe interna.
 
@@ -246,8 +331,11 @@ Status inicial padrão: todo
 DATA DE REFERÊNCIA: ${args.isoDate}
 DIA DA SEMANA ATUAL: ${args.weekday}
 
-CONTEÚDO CAPTURADO:
+CONTEÚDO CAPTURADO (texto):
 ${args.text}
+
+ANEXOS ANEXADOS (mesma ordem das partes inlineData a seguir):
+${attachmentsBlock}
 
 INSTRUÇÕES:
 
@@ -259,8 +347,8 @@ INSTRUÇÕES:
    - prazo: data ISO 8601 (YYYY-MM-DD). Interprete expressões relativas
      ('quinta', 'amanhã', 'fim do mês') usando a DATA DE REFERÊNCIA. Null se
      não houver menção.
-   - descricao: reescreva o conteúdo em uma frase clara, objetiva, em terceira
-     pessoa, descrevendo a tarefa a ser feita.
+   - descricao: reescreva o conteúdo principal em frases claras, objetivas, em
+     terceira pessoa, descrevendo a tarefa a ser feita.
    - tags: 1 a 3 palavras-chave curtas em kebab-case.
 
 2. Confiança de 0 a 1 para cada campo (exceto descricao e tags).
@@ -280,7 +368,7 @@ INSTRUÇÕES:
     "prioridade": 0.0,
     "prazo": 0.0
   }
-}
+}${enrichmentInstructions}
 
 Nunca invente informação que não esteja na captura. Para campos não detectados,
 use null e confiança baixa.`;

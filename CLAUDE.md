@@ -214,15 +214,58 @@ supabase link --project-ref rczvkarulymulmkxolez   # Linka ao projeto remoto
   (que devolve só "non-2xx status code"), consultar a tabela `ai_usage_log`
   — a Edge Function grava o `error_message` completo lá.
 
-## Próximo: Sprint 5 — Anexos Multimodais
+### Sprint 5 — concluído (com follow-ups conhecidos)
 
-Após Sprint 4 validado. Ver seção 11.2 do PRD. Entregas previstas:
+Anexos multimodais ponta a ponta validados em 2026-06-05: paste/upload no
+Storage privado funcionando, IA recebendo os arquivos e enriquecendo a
+descrição com blocos por tipo (transcrição de áudio, descrição de imagem,
+etc.).
 
-- Tabela `attachments` e bucket privado no Supabase Storage.
-- UI da janela de captura aceita anexos (paste, drag-drop, dialog).
-- Compressão de imagens/vídeos no client.
-- Edge Function processa anexos multimodais (imagens, PDFs, áudios, vídeos).
-- Extração enriquecida da descrição (ver RF-06b do PRD).
+- [x] Tabela `attachments` com RLS + bucket privado `attachments` no Storage
+      com policies escopadas (uploader insere; uploader/admin deletam;
+      qualquer membro lê via signed URL)
+- [x] `src/lib/attachments.ts`: validação, preview, upload, signed URL,
+      serialização inline (base64)
+- [x] `CaptureScreen` aceita anexos via paste (clipboard) e file picker;
+      preview compacto com remover; validação client-side de MIME + 50MB
+- [x] Convenção de path: `{demand_id}/{attachment_id}.{ext}` (UUID no
+      Storage; nome original preservado em `attachments.file_name`)
+- [x] Upload paralelo após `createDemand`, com cleanup de objeto órfão
+      caso o insert em `attachments` falhe
+- [x] Edge Function multimodal: aceita `attachments` no body, monta
+      `inlineData` por anexo (limite 12MB de base64 cumulativo), prompt
+      expandido com RF-06b instruindo blocos markdown por tipo MIME
+- [x] `extractDemand(text, attachments)` no helper de IA
+
+**Follow-ups conhecidos (deixados para depois):**
+
+- **Drag-drop não chega no webview** — o Tauri 2 intercepta `drop` no
+  shell. Setar `dragDropEnabled: false` na janela `capture` em
+  `src-tauri/tauri.conf.json` resolve. Paste e file picker já cobrem o
+  uso prático.
+- **Consistência do bloco RF-06b** — em testes reais, o Gemini às vezes
+  ignora a instrução de gerar o bloco markdown separado e funde a
+  transcrição na descrição principal. Refinar o prompt (ou migrar pra
+  `responseSchema` formal) quando houver dataset de capturas.
+- **Compressão de imagem/vídeo no client** (PRD seção 11.2). Imagem
+  funciona sem compressão até 50MB; vídeo só limitado por tamanho.
+- **Extração local de DOCX/XLSX/TXT/CSV** (PRD seção 11.2). Esses tipos
+  já podem ser anexados, mas a IA não enxerga o conteúdo deles ainda
+  (Gemini não aceita esses MIMEs como inlineData). Implementar com
+  `mammoth` (DOCX) e `sheetjs` (XLSX) e mandar como texto extraído.
+- **Vídeos > ~8MB** estouram o limite de inline. Migrar pra Files API do
+  Gemini quando necessário.
+
+## Próximo: Sprint 6 — Dashboard Completo
+
+Ver PRD seção 11.2 e RFs 12–16. Entregas previstas:
+
+- Lista com filtros (status, cliente, responsável, prioridade).
+- Visualização Kanban com drag-and-drop entre colunas.
+- Painel lateral com detalhes da demanda + lista de anexos com download
+  via signed URL.
+- Edição inline.
+- Busca global (`Cmd/Ctrl+K`).
 
 ## Regras para você (Claude Code)
 
