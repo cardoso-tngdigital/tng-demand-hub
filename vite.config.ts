@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import react from "@vitejs/plugin-react-swc";
 import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
@@ -17,7 +17,9 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Força IPv4 (127.0.0.1) para evitar conflito IPv4/IPv6 no macOS
+    // que faz o webview do Tauri dar timeout ao acessar "localhost".
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

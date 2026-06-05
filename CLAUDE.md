@@ -149,7 +149,9 @@ supabase link --project-ref rczvkarulymulmkxolez   # Linka ao projeto remoto
 - **Repositório:** https://github.com/cardoso-tngdigital/tng-demand-hub (privado)
 - **Secrets configurados:** `SUPABASE_URL`, `SUPABASE_PROJECT_REF`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`.
 
-## Estado atual (Sprint 1 — concluído)
+## Estado atual
+
+### Sprint 1 — concluído
 
 - [x] Scaffold Tauri 2 + React 19 + TypeScript + Vite 7
 - [x] Tailwind CSS 4 com tokens TNG e tema escuro default
@@ -158,15 +160,26 @@ supabase link --project-ref rczvkarulymulmkxolez   # Linka ao projeto remoto
 - [x] Tela de login funcional
 - [x] Tela placeholder pós-login (Welcome)
 
-## Próximo: Sprint 2 — Atalho Global e Janela de Captura
+### Sprint 2 — concluído
+
+- [x] Plugin `tauri-plugin-global-shortcut` integrado
+- [x] Janela `capture` declarada no `tauri.conf.json` (transparent, alwaysOnTop, sem decorations)
+- [x] Atalho `CmdOrCtrl+Shift+D` registrado no setup do Rust
+- [x] Tray icon com menu (Abrir / Nova captura / Sair) via `TrayIconBuilder`
+- [x] Comando Rust `hide_capture_window` invocável do frontend
+- [x] `CaptureScreen` com auto-focus, atalhos `Enter` (envia) e `Esc` (fecha)
+- [x] Roteamento por window label no `App.tsx` (`main` vs `capture`)
+- [x] `body` com background transparente (cores aplicadas por tela)
+
+## Próximo: Sprint 3 — Captura Salva no Supabase
 
 Ver seção 11.2 do PRD. Entregas previstas:
 
-- Plugin `tauri-plugin-global-shortcut` registrado.
-- Janela flutuante leve (sem barra de título, always-on-top).
-- Hotkey `CommandOrControl+Shift+D` abrindo a janela em menos de 200ms.
-- Atalhos `Enter` (enviar) e `Esc` (fechar).
-- Tray icon na bandeja com menu básico.
+- Tabela `demands` com RLS.
+- Tabela `clients` e seed inicial.
+- Captura simples (texto puro, sem IA) salva como demanda.
+- Dashboard listando demandas em tempo real.
+- Activity log básico.
 
 ## Regras para você (Claude Code)
 
