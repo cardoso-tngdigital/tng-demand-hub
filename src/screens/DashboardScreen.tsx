@@ -260,6 +260,8 @@ export function DashboardScreen() {
 
       <DemandDetailDrawer
         demand={selectedDemand}
+        clients={clients}
+        profiles={profiles}
         onClose={() => setSelectedDemandId(null)}
       />
     </div>

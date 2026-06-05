@@ -59,6 +59,45 @@ export async function createDemand(
   return { data: data as Demand, error: null };
 }
 
+/** Conjunto de campos editáveis de uma demanda (todos opcionais). */
+export type DemandPatch = Partial<{
+  title: string;
+  description: string;
+  client_id: string | null;
+  assignee_id: string | null;
+  priority: Demand["priority"];
+  status: Demand["status"];
+  due_date: string | null;
+  tags: string[];
+}>;
+
+/**
+ * Atualiza campos de uma demanda. Devolve a linha atualizada para que o caller
+ * possa reconciliar estado local sem esperar pelo realtime.
+ */
+export async function updateDemand(
+  id: string,
+  patch: DemandPatch,
+): Promise<{ data: Demand | null; error: string | null }> {
+  if (Object.keys(patch).length === 0) {
+    return { data: null, error: "Nada para atualizar." };
+  }
+
+  const { data, error } = await supabase
+    .from("demands")
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("[demands] update failed:", error);
+    return { data: null, error: error.message };
+  }
+
+  return { data: data as Demand, error: null };
+}
+
 /**
  * Lista demandas em ordem decrescente de criação.
  */

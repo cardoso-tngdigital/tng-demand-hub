@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase/client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { updateDemand, type DemandPatch } from "../lib/demands";
+import type { ClientOption, ProfileOption } from "../lib/lookups";
 import {
   categoryIcon,
   categorize,
@@ -9,25 +10,25 @@ import {
 } from "../lib/attachments";
 import type { Attachment, Demand, DemandPriority, DemandStatus } from "../types/database";
 
-const STATUS_LABEL: Record<DemandStatus, string> = {
-  todo: "A fazer",
-  doing: "Em andamento",
-  done: "Concluída",
-  archived: "Arquivada",
-};
+const STATUS_OPTIONS: { value: DemandStatus; label: string }[] = [
+  { value: "todo", label: "A fazer" },
+  { value: "doing", label: "Em andamento" },
+  { value: "done", label: "Concluída" },
+  { value: "archived", label: "Arquivada" },
+];
+
+const PRIORITY_OPTIONS: { value: DemandPriority; label: string }[] = [
+  { value: "baixa", label: "Baixa" },
+  { value: "media", label: "Média" },
+  { value: "alta", label: "Alta" },
+  { value: "urgente", label: "Urgente" },
+];
 
 const STATUS_STYLE: Record<DemandStatus, string> = {
   todo: "bg-tng-marine-600/60 text-tng-marine-100",
   doing: "bg-tng-orange-400/15 text-tng-orange-300",
   done: "bg-emerald-500/15 text-emerald-300",
   archived: "bg-tng-marine-700 text-tng-marine-300",
-};
-
-const PRIORITY_LABEL: Record<DemandPriority, string> = {
-  baixa: "Baixa",
-  media: "Média",
-  alta: "Alta",
-  urgente: "Urgente",
 };
 
 const PRIORITY_DOT: Record<DemandPriority, string> = {
@@ -48,16 +49,15 @@ function formatDate(iso: string | null): string {
   });
 }
 
-function formatDateOnly(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(`${iso}T00:00:00`).toLocaleDateString("pt-BR");
-}
-
 export function DemandDetailDrawer({
   demand,
+  clients,
+  profiles,
   onClose,
 }: {
   demand: Demand | null;
+  clients: ClientOption[];
+  profiles: ProfileOption[];
   onClose: () => void;
 }) {
   const open = demand !== null;
@@ -90,15 +90,31 @@ export function DemandDetailDrawer({
         role="dialog"
         aria-modal="true"
       >
-        {demand && <DemandDetailBody demand={demand} onClose={onClose} />}
+        {demand && (
+          <DemandDetailBody
+            demand={demand}
+            clients={clients}
+            profiles={profiles}
+            onClose={onClose}
+          />
+        )}
       </aside>
     </div>
   );
 }
 
-function DemandDetailBody({ demand, onClose }: { demand: Demand; onClose: () => void }) {
-  const clientName = useClientName(demand.client_id);
-  const assigneeName = useAssigneeName(demand.assignee_id);
+function DemandDetailBody({
+  demand,
+  clients,
+  profiles,
+  onClose,
+}: {
+  demand: Demand;
+  clients: ClientOption[];
+  profiles: ProfileOption[];
+  onClose: () => void;
+}) {
+  const editor = useDemandEditor(demand);
 
   return (
     <>
@@ -108,11 +124,19 @@ function DemandDetailBody({ demand, onClose }: { demand: Demand; onClose: () => 
             <span
               className={`h-2 w-2 shrink-0 rounded-full ${PRIORITY_DOT[demand.priority]}`}
             />
-            <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLE[demand.status]}`}
+            <select
+              value={demand.status}
+              onChange={(e) => editor.save({ status: e.target.value as DemandStatus })}
+              disabled={editor.saving}
+              className={`rounded-full border border-transparent px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider focus:border-tng-orange-400 focus:outline-none ${STATUS_STYLE[demand.status]}`}
             >
-              {STATUS_LABEL[demand.status]}
-            </span>
+              {STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} className="bg-tng-marine-800">
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <SaveIndicator saving={editor.saving} error={editor.error} />
           </div>
           <h2 className="mt-2 font-sans text-base font-semibold text-tng-marine-50">
             {demand.title || demand.description.slice(0, 80)}
@@ -129,32 +153,77 @@ function DemandDetailBody({ demand, onClose }: { demand: Demand; onClose: () => 
 
       <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
         <Section title="Descrição">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-tng-marine-100">
-            {demand.description}
-          </p>
+          <textarea
+            value={editor.draft.description}
+            onChange={(e) => editor.setField("description", e.target.value)}
+            onBlur={() => editor.flush("description")}
+            rows={6}
+            className="block w-full resize-y rounded-md border border-tng-marine-600 bg-tng-marine-800 px-3 py-2 text-sm leading-relaxed text-tng-marine-100 placeholder:text-tng-marine-400 focus:border-tng-orange-400 focus:outline-none"
+          />
         </Section>
 
         <div className="grid grid-cols-2 gap-4">
-          <MetaField label="Cliente" value={clientName ?? "—"} />
-          <MetaField label="Responsável" value={assigneeName ?? "—"} />
-          <MetaField label="Prioridade" value={PRIORITY_LABEL[demand.priority]} />
-          <MetaField label="Prazo" value={formatDateOnly(demand.due_date)} />
+          <EditableSelect
+            label="Cliente"
+            value={demand.client_id ?? ""}
+            onChange={(v) => editor.save({ client_id: v || null })}
+            disabled={editor.saving}
+          >
+            <option value="" className="bg-tng-marine-800">— Sem cliente</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id} className="bg-tng-marine-800">
+                {c.alias || c.name}
+              </option>
+            ))}
+          </EditableSelect>
+
+          <EditableSelect
+            label="Responsável"
+            value={demand.assignee_id ?? ""}
+            onChange={(v) => editor.save({ assignee_id: v || null })}
+            disabled={editor.saving}
+          >
+            <option value="" className="bg-tng-marine-800">— Sem responsável</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id} className="bg-tng-marine-800">
+                {p.full_name}
+              </option>
+            ))}
+          </EditableSelect>
+
+          <EditableSelect
+            label="Prioridade"
+            value={demand.priority}
+            onChange={(v) => editor.save({ priority: v as DemandPriority })}
+            disabled={editor.saving}
+          >
+            {PRIORITY_OPTIONS.map((p) => (
+              <option key={p.value} value={p.value} className="bg-tng-marine-800">
+                {p.label}
+              </option>
+            ))}
+          </EditableSelect>
+
+          <EditableField label="Prazo">
+            <input
+              type="date"
+              value={editor.draft.due_date}
+              onChange={(e) => editor.setField("due_date", e.target.value)}
+              onBlur={() => editor.flush("due_date")}
+              className="block w-full rounded-md border border-tng-marine-600 bg-tng-marine-800 px-2 py-1 text-sm text-tng-marine-100 focus:border-tng-orange-400 focus:outline-none"
+            />
+          </EditableField>
         </div>
 
-        {demand.tags.length > 0 && (
-          <Section title="Tags">
-            <ul className="flex flex-wrap gap-1.5">
-              {demand.tags.map((t) => (
-                <li
-                  key={t}
-                  className="rounded-full bg-tng-marine-700 px-2 py-0.5 text-[11px] text-tng-marine-200"
-                >
-                  {t}
-                </li>
-              ))}
-            </ul>
-          </Section>
-        )}
+        <Section title="Tags (separadas por vírgula)">
+          <input
+            value={editor.draft.tags}
+            onChange={(e) => editor.setField("tags", e.target.value)}
+            onBlur={() => editor.flush("tags")}
+            placeholder="design, cliente-externo"
+            className="block w-full rounded-md border border-tng-marine-600 bg-tng-marine-800 px-3 py-1.5 text-sm text-tng-marine-100 placeholder:text-tng-marine-400 focus:border-tng-orange-400 focus:outline-none"
+          />
+        </Section>
 
         <Section title="Anexos">
           <AttachmentsList demandId={demand.id} />
@@ -175,6 +244,141 @@ function DemandDetailBody({ demand, onClose }: { demand: Demand; onClose: () => 
   );
 }
 
+// ---------------------------------------------------------------------------
+// Editor: encapsula o estado de rascunho para campos free-text, decide se há
+// algo a persistir, dispara updateDemand e expõe estado de saving/error.
+// ---------------------------------------------------------------------------
+
+type DraftFields = "description" | "tags" | "due_date";
+
+type Draft = { description: string; tags: string; due_date: string };
+
+function draftFromDemand(d: Demand): Draft {
+  return {
+    description: d.description,
+    tags: d.tags.join(", "),
+    due_date: d.due_date ?? "",
+  };
+}
+
+function useDemandEditor(demand: Demand) {
+  const [draft, setDraft] = useState<Draft>(() => draftFromDemand(demand));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const baselineRef = useRef<Draft>(draftFromDemand(demand));
+
+  // Quando muda a demanda selecionada OU quando o realtime traz nova versão,
+  // reconcilia o rascunho com o banco — preservando edição local de campos
+  // que ainda divergem da baseline (usuário ainda digitando).
+  useEffect(() => {
+    const next = draftFromDemand(demand);
+    setDraft((current) => ({
+      description:
+        current.description === baselineRef.current.description ? next.description : current.description,
+      tags: current.tags === baselineRef.current.tags ? next.tags : current.tags,
+      due_date: current.due_date === baselineRef.current.due_date ? next.due_date : current.due_date,
+    }));
+    baselineRef.current = next;
+  }, [demand]);
+
+  const save = useCallback(
+    async (patch: DemandPatch) => {
+      setSaving(true);
+      setError(null);
+      const { error } = await updateDemand(demand.id, patch);
+      setSaving(false);
+      if (error) setError(error);
+    },
+    [demand.id],
+  );
+
+  const setField = useCallback((field: DraftFields, value: string) => {
+    setDraft((prev) => ({ ...prev, [field]: value }));
+  }, []);
+
+  /**
+   * Persiste o campo se o valor atual diverge da baseline (último valor
+   * conhecido do banco). Evita chamadas redundantes em blurs sem alteração.
+   */
+  const flush = useCallback(
+    async (field: DraftFields) => {
+      const current = draft[field];
+      const baseline = baselineRef.current[field];
+      if (current === baseline) return;
+
+      let patch: DemandPatch;
+      if (field === "tags") {
+        patch = {
+          tags: current
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+        };
+      } else if (field === "due_date") {
+        patch = { due_date: current.trim() || null };
+      } else {
+        patch = { description: current };
+      }
+      await save(patch);
+    },
+    [draft, save],
+  );
+
+  return { draft, setField, flush, save, saving, error };
+}
+
+function SaveIndicator({ saving, error }: { saving: boolean; error: string | null }) {
+  if (error) {
+    return (
+      <span className="text-[10px] text-red-300" title={error}>
+        erro ao salvar
+      </span>
+    );
+  }
+  if (saving) {
+    return <span className="text-[10px] text-tng-marine-300">salvando…</span>;
+  }
+  return null;
+}
+
+function EditableField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-[10px] uppercase tracking-wider text-tng-marine-300">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EditableSelect({
+  label,
+  value,
+  onChange,
+  disabled,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <EditableField label={label}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className="block w-full rounded-md border border-tng-marine-600 bg-tng-marine-800 px-2 py-1 text-sm text-tng-marine-100 focus:border-tng-orange-400 focus:outline-none disabled:opacity-60"
+      >
+        {children}
+      </select>
+    </EditableField>
+  );
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
@@ -184,65 +388,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       {children}
     </section>
   );
-}
-
-function MetaField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-[10px] uppercase tracking-wider text-tng-marine-300">
-        {label}
-      </div>
-      <div className="text-sm text-tng-marine-100">{value}</div>
-    </div>
-  );
-}
-
-function useClientName(clientId: string | null): string | null {
-  const [name, setName] = useState<string | null>(null);
-  useEffect(() => {
-    if (!clientId) {
-      setName(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase
-        .from("clients")
-        .select("name, alias")
-        .eq("id", clientId)
-        .maybeSingle();
-      if (cancelled || !data) return;
-      setName(data.alias || data.name);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId]);
-  return name;
-}
-
-function useAssigneeName(assigneeId: string | null): string | null {
-  const [name, setName] = useState<string | null>(null);
-  useEffect(() => {
-    if (!assigneeId) {
-      setName(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", assigneeId)
-        .maybeSingle();
-      if (cancelled || !data) return;
-      setName(data.full_name);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [assigneeId]);
-  return name;
 }
 
 function AttachmentsList({ demandId }: { demandId: string }) {
