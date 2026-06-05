@@ -67,3 +67,14 @@ export interface NewDemandInput {
   tags?: string[];
   captured_via?: CapturedVia;
 }
+
+export interface Attachment {
+  id: string;
+  demand_id: string;
+  file_path: string;
+  file_name: string;
+  file_type: string;
+  file_size_bytes: number;
+  uploaded_by: string | null;
+  created_at: string;
+}
