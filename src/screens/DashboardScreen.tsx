@@ -3,6 +3,7 @@ import { useAuth } from "../hooks/useAuth";
 import { listDemands, subscribeToDemands } from "../lib/demands";
 import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileOption } from "../lib/lookups";
 import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
+import { KanbanBoard } from "../components/KanbanBoard";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
 
@@ -82,6 +83,7 @@ export function DashboardScreen() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
   const [clientFilter, setClientFilter] = useState<RefFilter>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<RefFilter>("all");
+  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
 
   // Carrega lookups uma vez
   useEffect(() => {
@@ -173,12 +175,12 @@ export function DashboardScreen() {
   }, [filteredDemands]);
 
   return (
-    <div
-      data-tauri-drag-region
-      className="flex h-screen flex-col bg-tng-marine-900"
-    >
+    <div className="flex h-screen flex-col bg-tng-marine-900">
       {/* Header */}
-      <header className="flex items-center justify-between border-b border-tng-marine-700 px-6 py-3">
+      <header
+        data-tauri-drag-region
+        className="flex items-center justify-between border-b border-tng-marine-700 px-6 py-3"
+      >
         <div className="flex items-center gap-3">
           <img src={logoDark} alt="TNG Digital" className="h-8 w-auto" draggable={false} />
           <span className="text-sm text-tng-marine-200">Demand Hub</span>
@@ -197,6 +199,7 @@ export function DashboardScreen() {
           </span>
         </div>
         <div className="flex items-center gap-3">
+          <ViewToggle mode={viewMode} onChange={setViewMode} />
           <span className="text-xs text-tng-marine-300">{user?.email}</span>
           <button
             onClick={signOut}
@@ -231,8 +234,14 @@ export function DashboardScreen() {
         onClear={clearFilters}
       />
 
-      {/* Lista */}
-      <main className="flex-1 overflow-y-auto px-6 py-5">
+      {/* Lista ou Kanban */}
+      <main
+        className={
+          viewMode === "list"
+            ? "flex-1 overflow-y-auto px-6 py-5"
+            : "flex-1 overflow-hidden px-6 py-5"
+        }
+      >
         {loading ? (
           <div className="flex h-full items-center justify-center text-sm text-tng-marine-300">
             Carregando demandas…
@@ -243,18 +252,25 @@ export function DashboardScreen() {
           </div>
         ) : demands.length === 0 ? (
           <EmptyState />
-        ) : filteredDemands.length === 0 ? (
-          <FilteredEmptyState onClear={clearFilters} />
+        ) : viewMode === "list" ? (
+          filteredDemands.length === 0 ? (
+            <FilteredEmptyState onClear={clearFilters} />
+          ) : (
+            <ul className="space-y-2">
+              {filteredDemands.map((demand) => (
+                <DemandCard
+                  key={demand.id}
+                  demand={demand}
+                  onSelect={() => setSelectedDemandId(demand.id)}
+                />
+              ))}
+            </ul>
+          )
         ) : (
-          <ul className="space-y-2">
-            {filteredDemands.map((demand) => (
-              <DemandCard
-                key={demand.id}
-                demand={demand}
-                onSelect={() => setSelectedDemandId(demand.id)}
-              />
-            ))}
-          </ul>
+          <KanbanBoard
+            demands={filteredDemands}
+            onSelectDemand={setSelectedDemandId}
+          />
         )}
       </main>
 
@@ -264,6 +280,41 @@ export function DashboardScreen() {
         profiles={profiles}
         onClose={() => setSelectedDemandId(null)}
       />
+    </div>
+  );
+}
+
+function ViewToggle({
+  mode,
+  onChange,
+}: {
+  mode: "list" | "kanban";
+  onChange: (m: "list" | "kanban") => void;
+}) {
+  return (
+    <div className="flex overflow-hidden rounded-md border border-tng-marine-600">
+      <button
+        type="button"
+        onClick={() => onChange("list")}
+        className={`px-2.5 py-1 text-[11px] transition ${
+          mode === "list"
+            ? "bg-tng-marine-600 text-tng-marine-50"
+            : "text-tng-marine-300 hover:bg-tng-marine-700/60 hover:text-tng-marine-100"
+        }`}
+      >
+        Lista
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("kanban")}
+        className={`px-2.5 py-1 text-[11px] transition ${
+          mode === "kanban"
+            ? "bg-tng-marine-600 text-tng-marine-50"
+            : "text-tng-marine-300 hover:bg-tng-marine-700/60 hover:text-tng-marine-100"
+        }`}
+      >
+        Kanban
+      </button>
     </div>
   );
 }

@@ -21,6 +21,7 @@
         "center": true,
         "resizable": true,
         "decorations": true,
+        "dragDropEnabled": false,
         "url": "index.html"
       },
       {
@@ -38,6 +39,7 @@
         "minimizable": false,
         "maximizable": false,
         "shadow": true,
+        "dragDropEnabled": false,
         "url": "index.html#capture"
       }
     ],
