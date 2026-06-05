@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* =============================================================================
+   TNG Demand Hub — Design Tokens
+   Paleta oficial TNG Digital:
+   - #082345 azul-marinho profundo (primary)
+   - #F6A532 laranja vibrante (accent)
+   - #393536 cinza escuro (neutral)
+   ============================================================================= */
+
+@theme {
+  /* Fontes */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Cores oficiais TNG */
+  --color-tng-marine-50: #f0f4f9;
+  --color-tng-marine-100: #d7e1ee;
+  --color-tng-marine-200: #aac0d8;
+  --color-tng-marine-300: #7d9fc1;
+  --color-tng-marine-400: #4e7da9;
+  --color-tng-marine-500: #2a5688;
+  --color-tng-marine-600: #1a3759;
+  --color-tng-marine-700: #082345;
+  --color-tng-marine-800: #061a33;
+  --color-tng-marine-900: #0a1f3a;
+
+  --color-tng-orange-50: #fef5e7;
+  --color-tng-orange-100: #fde6c0;
+  --color-tng-orange-200: #fbcb79;
+  --color-tng-orange-300: #f9b955;
+  --color-tng-orange-400: #f6a532;
+  --color-tng-orange-500: #e89421;
+  --color-tng-orange-600: #c47714;
+  --color-tng-orange-700: #95590f;
+  --color-tng-orange-800: #6b400b;
+
+  --color-tng-graphite-50: #f5f5f5;
+  --color-tng-graphite-100: #e8e8e8;
+  --color-tng-graphite-300: #a8a4a5;
+  --color-tng-graphite-500: #6b6566;
+  --color-tng-graphite-700: #4a4647;
+  --color-tng-graphite-900: #393536;
+}
+
+/* =============================================================================
+   Reset / globais
+   ============================================================================= */
+
+@layer base {
+  html,
+  body {
+    @apply h-full;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-tng-marine-900);
+    color: var(--color-tng-marine-50);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100%;
+  }
+
+  /* Inputs nativos do Tauri (drag region) */
+  [data-tauri-drag-region] {
+    -webkit-app-region: drag;
+  }
+  [data-tauri-drag-region] button,
+  [data-tauri-drag-region] input,
+  [data-tauri-drag-region] a {
+    -webkit-app-region: no-drag;
+  }
+}
