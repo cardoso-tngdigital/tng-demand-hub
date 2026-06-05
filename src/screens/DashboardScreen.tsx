@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { listDemands, subscribeToDemands } from "../lib/demands";
+import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
 
@@ -52,6 +53,7 @@ export function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
 
   // Carrega lista inicial
   useEffect(() => {
@@ -86,6 +88,11 @@ export function DashboardScreen() {
       unsubscribe();
     };
   }, []);
+
+  const selectedDemand = useMemo(
+    () => demands.find((d) => d.id === selectedDemandId) ?? null,
+    [demands, selectedDemandId],
+  );
 
   const stats = useMemo(() => {
     const total = demands.length;
@@ -161,11 +168,20 @@ export function DashboardScreen() {
         ) : (
           <ul className="space-y-2">
             {demands.map((demand) => (
-              <DemandCard key={demand.id} demand={demand} />
+              <DemandCard
+                key={demand.id}
+                demand={demand}
+                onSelect={() => setSelectedDemandId(demand.id)}
+              />
             ))}
           </ul>
         )}
       </main>
+
+      <DemandDetailDrawer
+        demand={selectedDemand}
+        onClose={() => setSelectedDemandId(null)}
+      />
     </div>
   );
 }
@@ -189,9 +205,20 @@ function Stat({
   );
 }
 
-function DemandCard({ demand }: { demand: Demand }) {
+function DemandCard({ demand, onSelect }: { demand: Demand; onSelect: () => void }) {
   return (
-    <li className="rounded-lg border border-tng-marine-700 bg-tng-marine-800/40 px-4 py-3 transition hover:border-tng-marine-600">
+    <li
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      className="cursor-pointer rounded-lg border border-tng-marine-700 bg-tng-marine-800/40 px-4 py-3 transition hover:border-tng-orange-400/50 focus:border-tng-orange-400 focus:outline-none"
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

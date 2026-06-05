@@ -183,6 +183,22 @@ export async function getSignedUrl(filePath: string, expiresInSeconds = 3600): P
   return data.signedUrl;
 }
 
+/** Lista os anexos de uma demanda em ordem de upload. */
+export async function listAttachments(
+  demandId: string,
+): Promise<{ data: Attachment[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from("attachments")
+    .select("*")
+    .eq("demand_id", demandId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("[attachments] list failed:", error);
+    return { data: [], error: error.message };
+  }
+  return { data: (data as Attachment[]) ?? [], error: null };
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

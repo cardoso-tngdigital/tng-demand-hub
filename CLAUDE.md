@@ -255,17 +255,43 @@ etc.).
   `mammoth` (DOCX) e `sheetjs` (XLSX) e mandar como texto extraído.
 - **Vídeos > ~8MB** estouram o limite de inline. Migrar pra Files API do
   Gemini quando necessário.
+- **PDF anexado falha no `fileToBase64`** com "The I/O read operation
+  failed" — o `FileReader.readAsDataURL` parece estourar com PDFs
+  específicos. Investigar com chunked reader ou migrar PDFs para a
+  Files API do Gemini.
 
-## Próximo: Sprint 6 — Dashboard Completo
+## Sprint 6 — em andamento (Dashboard Completo)
 
-Ver PRD seção 11.2 e RFs 12–16. Entregas previstas:
+Ver PRD seção 11.2 e RFs 12–16.
 
-- Lista com filtros (status, cliente, responsável, prioridade).
-- Visualização Kanban com drag-and-drop entre colunas.
-- Painel lateral com detalhes da demanda + lista de anexos com download
-  via signed URL.
-- Edição inline.
-- Busca global (`Cmd/Ctrl+K`).
+### Fase 1 — Painel de detalhes (concluída)
+
+- [x] Click numa demanda do Dashboard abre drawer lateral (520px)
+- [x] Mostra título, status, prioridade, descrição completa, cliente
+      (nome resolvido), responsável (nome resolvido), prazo, tags,
+      lista de anexos, metadados
+- [x] Anexos têm viewer embedded no app:
+      - imagens via `<img>`, áudios via `<audio controls>`, vídeos via
+        `<video controls>`, PDFs via `<iframe>` (webview renderiza
+        nativamente); demais tipos mostram botão "Baixar" via
+        `<a download>` interno (não abre browser externo)
+- [x] Esc fecha drawer e viewer
+- [x] Atualizações de realtime propagam automaticamente para a demanda
+      selecionada (state guarda só `selectedDemandId`)
+
+### Próximas fases
+
+- Fase 2 — Filtros no topo (status, cliente, responsável, prioridade)
+- Fase 3 — Edição inline (status/prioridade direto na linha + edição
+  completa dentro do drawer)
+- Fase 4 — Toggle Lista/Kanban com drag-and-drop entre colunas
+- Fase 5 — Busca global (`Cmd/Ctrl+K`)
+
+### Pendência específica desta sprint
+
+- **Renderização markdown da descrição** no drawer — hoje a descrição
+  com blocos RF-06b aparece como texto bruto (preservando quebras).
+  Plugar `react-markdown` ou equivalente quando vier polimento.
 
 ## Regras para você (Claude Code)
 
