@@ -26,7 +26,7 @@ Documentos de referência (no diretório pai `../`):
 | Estado UI | useState/useContext (Zustand entra quando justificar) |
 | Backend | Supabase (PostgreSQL + Auth + Storage + Realtime) |
 | Cliente Supabase | `@supabase/supabase-js` 2.x |
-| IA | Google Gemini 2.0 Flash (via Edge Function, futuro) |
+| IA | Google Gemini 2.5 Flash (via Edge Function) |
 
 ## Identidade visual TNG
 
@@ -183,49 +183,36 @@ supabase link --project-ref rczvkarulymulmkxolez   # Linka ao projeto remoto
 - [x] `DashboardScreen` (substitui Welcome) com lista, stats e indicador realtime ao vivo
 - [x] Roteamento atualizado para usar Dashboard
 
-### Sprint 4 — código pronto, validação pendente
-
-Tudo implementado e empurrado pro GitHub. Falta apenas o teste manual de ponta a ponta para fechar.
+### Sprint 4 — concluído
 
 - [x] Tabela `ai_usage_log` com RLS (migration aplicada no Supabase)
 - [x] Edge Function `supabase/functions/extract-demand/index.ts` deployada
-  (chama Gemini 2.0 Flash, valida JSON, registra uso, fallback gracioso)
+  (chama Gemini 2.5 Flash com `thinkingBudget: 0`, valida JSON, registra
+  uso, fallback gracioso)
 - [x] Secret `GEMINI_API_KEY` configurado no projeto Supabase
 - [x] Helper `extractDemand` em `src/lib/ai.ts`
 - [x] `CaptureScreen` refatorado em duas views (Input + Confirm) com fluxo:
       texto → IA → confirmação editável → salva
 - [x] Tela de confirmação destaca campos com confiança < 70% em laranja
 - [x] Fallback "Salvar mesmo assim" se IA falhar
+- [x] Validação manual de ponta a ponta concluída em 2026-06-05 (extração
+      correta de prioridade, prazo relativo e tags; demanda sincronizou em
+      tempo real no Dashboard)
 
-## 📍 Onde paramos — para retomar
+**Notas de bastidor (úteis para Sprint 5 e debugging futuro):**
 
-Próximo passo é **testar manualmente** o fluxo do Sprint 4 e fazer o commit final
-de validação. Procedimento:
-
-1. Rodar `npm run tauri dev` no terminal (de dentro de `tng-demand-hub/`).
-2. Login no app.
-3. Pressionar `Cmd+Shift+D` e digitar uma frase descritiva, ex:
-   *"Pedro precisa ajustar o banner do cliente Acme até quinta-feira, é urgente"*.
-4. Pressionar Enter — botão muda para "Processando…" enquanto chama a Edge
-   Function.
-5. Tela de revisão deve aparecer com os campos extraídos pelo Gemini
-   (cliente, responsável, prioridade, prazo, descrição, tags) e a confiança
-   de cada um em %.
-6. Ajustar o que quiser e clicar em "Confirmar e enviar" (ou `Cmd+Enter`).
-7. Demanda deve aparecer no Dashboard com prioridade e tags corretas.
-
-**Possíveis problemas a investigar:**
-
-- Se aparecer "IA indisponível: ..." no rodapé vermelho, a chave do Gemini
-  pode ser inválida. Chaves do formato `AQ.Ab8RN6...` (que é o que o usuário
-  forneceu) parecem tokens OAuth, não API keys padrão do Google AI Studio
-  (`AIzaSy...`). Pode ser necessário gerar uma chave nova em
-  https://aistudio.google.com/app/apikey.
-- Se aparecer erro de auth, verificar `Authorization` header sendo enviado
-  pela função invoke do Supabase.
-
-**Após sucesso do teste:** commit `Sprint 4: validação de ponta a ponta concluída`
-e push. Task #41 fica pendente até esse commit.
+- O modelo `gemini-2.0-flash` saiu do free tier para projetos novos do
+  AI Studio — usar `gemini-2.5-flash` ou superior.
+- `gemini-2.5-flash` tem *thinking mode* ativo por padrão, que consome o
+  orçamento de `maxOutputTokens` antes de gerar a resposta visível. Sempre
+  passar `thinkingConfig: { thinkingBudget: 0 }` em chamadas de extração
+  estruturada — sem isso, a resposta vem truncada no meio do JSON.
+- Chaves do AI Studio em algumas contas podem aparecer no formato
+  `AQ.Ab8RN6...` em vez do clássico `AIzaSy...`. Ambas autenticam no
+  endpoint `generativelanguage.googleapis.com`.
+- Para debug rápido de erros mascarados pelo `supabase.functions.invoke`
+  (que devolve só "non-2xx status code"), consultar a tabela `ai_usage_log`
+  — a Edge Function grava o `error_message` completo lá.
 
 ## Próximo: Sprint 5 — Anexos Multimodais
 
