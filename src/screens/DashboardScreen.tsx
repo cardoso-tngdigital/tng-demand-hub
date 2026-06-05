@@ -1,9 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { listDemands, subscribeToDemands } from "../lib/demands";
+import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileOption } from "../lib/lookups";
 import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
+
+type StatusFilter = DemandStatus | "all";
+type PriorityFilter = DemandPriority | "all";
+type RefFilter = string | "all" | "none";
+
+const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "Todos os status" },
+  { value: "todo", label: "A fazer" },
+  { value: "doing", label: "Em andamento" },
+  { value: "done", label: "Concluída" },
+  { value: "archived", label: "Arquivada" },
+];
+
+const PRIORITY_FILTER_OPTIONS: { value: PriorityFilter; label: string }[] = [
+  { value: "all", label: "Toda prioridade" },
+  { value: "urgente", label: "Urgente" },
+  { value: "alta", label: "Alta" },
+  { value: "media", label: "Média" },
+  { value: "baixa", label: "Baixa" },
+];
 
 const STATUS_LABEL: Record<DemandStatus, string> = {
   todo: "A fazer",
@@ -55,6 +76,22 @@ export function DashboardScreen() {
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
 
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [profiles, setProfiles] = useState<ProfileOption[]>([]);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
+  const [clientFilter, setClientFilter] = useState<RefFilter>("all");
+  const [assigneeFilter, setAssigneeFilter] = useState<RefFilter>("all");
+
+  // Carrega lookups uma vez
+  useEffect(() => {
+    (async () => {
+      const [c, p] = await Promise.all([listActiveClients(), listActiveProfiles()]);
+      setClients(c);
+      setProfiles(p);
+    })();
+  }, []);
+
   // Carrega lista inicial
   useEffect(() => {
     (async () => {
@@ -94,21 +131,46 @@ export function DashboardScreen() {
     [demands, selectedDemandId],
   );
 
+  const filteredDemands = useMemo(() => {
+    return demands.filter((d) => {
+      if (statusFilter !== "all" && d.status !== statusFilter) return false;
+      if (priorityFilter !== "all" && d.priority !== priorityFilter) return false;
+      if (clientFilter === "none" && d.client_id !== null) return false;
+      if (clientFilter !== "all" && clientFilter !== "none" && d.client_id !== clientFilter) return false;
+      if (assigneeFilter === "none" && d.assignee_id !== null) return false;
+      if (assigneeFilter !== "all" && assigneeFilter !== "none" && d.assignee_id !== assigneeFilter) return false;
+      return true;
+    });
+  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter]);
+
+  const filtersActive =
+    statusFilter !== "all" ||
+    priorityFilter !== "all" ||
+    clientFilter !== "all" ||
+    assigneeFilter !== "all";
+
+  function clearFilters() {
+    setStatusFilter("all");
+    setPriorityFilter("all");
+    setClientFilter("all");
+    setAssigneeFilter("all");
+  }
+
   const stats = useMemo(() => {
-    const total = demands.length;
-    const todo = demands.filter((d) => d.status === "todo").length;
-    const doing = demands.filter((d) => d.status === "doing").length;
-    const today = demands.filter((d) => {
-      const today = new Date();
+    const total = filteredDemands.length;
+    const todo = filteredDemands.filter((d) => d.status === "todo").length;
+    const doing = filteredDemands.filter((d) => d.status === "doing").length;
+    const today = filteredDemands.filter((d) => {
+      const now = new Date();
       const created = new Date(d.created_at);
       return (
-        created.getDate() === today.getDate() &&
-        created.getMonth() === today.getMonth() &&
-        created.getFullYear() === today.getFullYear()
+        created.getDate() === now.getDate() &&
+        created.getMonth() === now.getMonth() &&
+        created.getFullYear() === now.getFullYear()
       );
     }).length;
     return { total, todo, doing, today };
-  }, [demands]);
+  }, [filteredDemands]);
 
   return (
     <div
@@ -153,6 +215,22 @@ export function DashboardScreen() {
         <Stat label="Hoje" value={stats.today} accent="text-emerald-400" />
       </section>
 
+      {/* Filtros */}
+      <FilterBar
+        statusFilter={statusFilter}
+        priorityFilter={priorityFilter}
+        clientFilter={clientFilter}
+        assigneeFilter={assigneeFilter}
+        clients={clients}
+        profiles={profiles}
+        onStatusChange={setStatusFilter}
+        onPriorityChange={setPriorityFilter}
+        onClientChange={setClientFilter}
+        onAssigneeChange={setAssigneeFilter}
+        active={filtersActive}
+        onClear={clearFilters}
+      />
+
       {/* Lista */}
       <main className="flex-1 overflow-y-auto px-6 py-5">
         {loading ? (
@@ -165,9 +243,11 @@ export function DashboardScreen() {
           </div>
         ) : demands.length === 0 ? (
           <EmptyState />
+        ) : filteredDemands.length === 0 ? (
+          <FilteredEmptyState onClear={clearFilters} />
         ) : (
           <ul className="space-y-2">
-            {demands.map((demand) => (
+            {filteredDemands.map((demand) => (
               <DemandCard
                 key={demand.id}
                 demand={demand}
@@ -182,6 +262,127 @@ export function DashboardScreen() {
         demand={selectedDemand}
         onClose={() => setSelectedDemandId(null)}
       />
+    </div>
+  );
+}
+
+function FilterBar(props: {
+  statusFilter: StatusFilter;
+  priorityFilter: PriorityFilter;
+  clientFilter: RefFilter;
+  assigneeFilter: RefFilter;
+  clients: ClientOption[];
+  profiles: ProfileOption[];
+  onStatusChange: (v: StatusFilter) => void;
+  onPriorityChange: (v: PriorityFilter) => void;
+  onClientChange: (v: RefFilter) => void;
+  onAssigneeChange: (v: RefFilter) => void;
+  active: boolean;
+  onClear: () => void;
+}) {
+  return (
+    <section className="flex flex-wrap items-center gap-2 border-b border-tng-marine-700 bg-tng-marine-800/30 px-6 py-2">
+      <FilterSelect
+        value={props.statusFilter}
+        onChange={(v) => props.onStatusChange(v as StatusFilter)}
+        active={props.statusFilter !== "all"}
+      >
+        {STATUS_FILTER_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value} className="bg-tng-marine-800">
+            {o.label}
+          </option>
+        ))}
+      </FilterSelect>
+
+      <FilterSelect
+        value={props.priorityFilter}
+        onChange={(v) => props.onPriorityChange(v as PriorityFilter)}
+        active={props.priorityFilter !== "all"}
+      >
+        {PRIORITY_FILTER_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value} className="bg-tng-marine-800">
+            {o.label}
+          </option>
+        ))}
+      </FilterSelect>
+
+      <FilterSelect
+        value={props.clientFilter}
+        onChange={(v) => props.onClientChange(v as RefFilter)}
+        active={props.clientFilter !== "all"}
+      >
+        <option value="all" className="bg-tng-marine-800">Todos os clientes</option>
+        <option value="none" className="bg-tng-marine-800">Sem cliente</option>
+        {props.clients.map((c) => (
+          <option key={c.id} value={c.id} className="bg-tng-marine-800">
+            {c.alias || c.name}
+          </option>
+        ))}
+      </FilterSelect>
+
+      <FilterSelect
+        value={props.assigneeFilter}
+        onChange={(v) => props.onAssigneeChange(v as RefFilter)}
+        active={props.assigneeFilter !== "all"}
+      >
+        <option value="all" className="bg-tng-marine-800">Todos responsáveis</option>
+        <option value="none" className="bg-tng-marine-800">Sem responsável</option>
+        {props.profiles.map((p) => (
+          <option key={p.id} value={p.id} className="bg-tng-marine-800">
+            {p.full_name}
+          </option>
+        ))}
+      </FilterSelect>
+
+      {props.active && (
+        <button
+          type="button"
+          onClick={props.onClear}
+          className="ml-auto text-[11px] text-tng-marine-300 hover:text-tng-orange-400"
+        >
+          Limpar filtros
+        </button>
+      )}
+    </section>
+  );
+}
+
+function FilterSelect({
+  value,
+  onChange,
+  active,
+  children,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={`rounded-md border bg-tng-marine-800 px-2 py-1 text-xs text-tng-marine-100 transition focus:border-tng-orange-400 focus:outline-none ${
+        active ? "border-tng-orange-400/60" : "border-tng-marine-600"
+      }`}
+    >
+      {children}
+    </select>
+  );
+}
+
+function FilteredEmptyState({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center text-center">
+      <p className="text-sm text-tng-marine-200">
+        Nenhuma demanda corresponde aos filtros.
+      </p>
+      <button
+        onClick={onClear}
+        className="mt-2 text-xs text-tng-orange-400 hover:underline"
+      >
+        Limpar filtros
+      </button>
     </div>
   );
 }
