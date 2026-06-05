@@ -1,0 +1,67 @@
+import { supabase } from "./supabase/client";
+import type { DemandPriority } from "../types/database";
+
+export type Confianca = {
+  cliente: number;
+  responsavel: number;
+  prioridade: number;
+  prazo: number;
+};
+
+export type ExtractedDemand = {
+  cliente: string | null;
+  responsavel: string | null;
+  prioridade: DemandPriority;
+  prazo: string | null;
+  descricao: string;
+  tags: string[];
+  confianca: Confianca;
+};
+
+export type ExtractionUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cost_micro: number;
+  latency_ms: number;
+};
+
+export type ExtractionResult =
+  | { ok: true; extracted: ExtractedDemand; usage: ExtractionUsage }
+  | { ok: false; error: string; fallback: boolean };
+
+/**
+ * Chama a Edge Function `extract-demand` que aciona o Gemini 2.0 Flash.
+ * Retorna os campos estruturados da demanda ou um erro com fallback indicando
+ * que o usuário pode preencher manualmente.
+ */
+export async function extractDemand(text: string): Promise<ExtractionResult> {
+  try {
+    const { data, error } = await supabase.functions.invoke<{
+      extracted?: ExtractedDemand;
+      usage?: ExtractionUsage;
+      error?: string;
+      fallback?: boolean;
+    }>("extract-demand", {
+      body: { text },
+    });
+
+    if (error) {
+      console.error("[ai] invoke error:", error);
+      return { ok: false, error: error.message, fallback: true };
+    }
+
+    if (!data?.extracted || !data?.usage) {
+      return {
+        ok: false,
+        error: data?.error ?? "Resposta inválida da IA",
+        fallback: data?.fallback ?? true,
+      };
+    }
+
+    return { ok: true, extracted: data.extracted, usage: data.usage };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[ai] unexpected error:", msg);
+    return { ok: false, error: msg, fallback: true };
+  }
+}

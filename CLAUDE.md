@@ -183,15 +183,59 @@ supabase link --project-ref rczvkarulymulmkxolez   # Linka ao projeto remoto
 - [x] `DashboardScreen` (substitui Welcome) com lista, stats e indicador realtime ao vivo
 - [x] Roteamento atualizado para usar Dashboard
 
-## Próximo: Sprint 4 — Integração com Gemini (IA Extratora)
+### Sprint 4 — código pronto, validação pendente
 
-Ver seção 11.2 do PRD. Entregas previstas:
+Tudo implementado e empurrado pro GitHub. Falta apenas o teste manual de ponta a ponta para fechar.
 
-- Edge Function `extract-demand` no Supabase chamando Gemini 2.0 Flash.
-- Prompt v1 do extrator (ver seção 9.2 do PRD).
-- Validação do JSON retornado e fallback para captura manual.
-- Tela de confirmação editável com campos extraídos.
-- Tabela `ai_usage_log` para controle de custo.
+- [x] Tabela `ai_usage_log` com RLS (migration aplicada no Supabase)
+- [x] Edge Function `supabase/functions/extract-demand/index.ts` deployada
+  (chama Gemini 2.0 Flash, valida JSON, registra uso, fallback gracioso)
+- [x] Secret `GEMINI_API_KEY` configurado no projeto Supabase
+- [x] Helper `extractDemand` em `src/lib/ai.ts`
+- [x] `CaptureScreen` refatorado em duas views (Input + Confirm) com fluxo:
+      texto → IA → confirmação editável → salva
+- [x] Tela de confirmação destaca campos com confiança < 70% em laranja
+- [x] Fallback "Salvar mesmo assim" se IA falhar
+
+## 📍 Onde paramos — para retomar
+
+Próximo passo é **testar manualmente** o fluxo do Sprint 4 e fazer o commit final
+de validação. Procedimento:
+
+1. Rodar `npm run tauri dev` no terminal (de dentro de `tng-demand-hub/`).
+2. Login no app.
+3. Pressionar `Cmd+Shift+D` e digitar uma frase descritiva, ex:
+   *"Pedro precisa ajustar o banner do cliente Acme até quinta-feira, é urgente"*.
+4. Pressionar Enter — botão muda para "Processando…" enquanto chama a Edge
+   Function.
+5. Tela de revisão deve aparecer com os campos extraídos pelo Gemini
+   (cliente, responsável, prioridade, prazo, descrição, tags) e a confiança
+   de cada um em %.
+6. Ajustar o que quiser e clicar em "Confirmar e enviar" (ou `Cmd+Enter`).
+7. Demanda deve aparecer no Dashboard com prioridade e tags corretas.
+
+**Possíveis problemas a investigar:**
+
+- Se aparecer "IA indisponível: ..." no rodapé vermelho, a chave do Gemini
+  pode ser inválida. Chaves do formato `AQ.Ab8RN6...` (que é o que o usuário
+  forneceu) parecem tokens OAuth, não API keys padrão do Google AI Studio
+  (`AIzaSy...`). Pode ser necessário gerar uma chave nova em
+  https://aistudio.google.com/app/apikey.
+- Se aparecer erro de auth, verificar `Authorization` header sendo enviado
+  pela função invoke do Supabase.
+
+**Após sucesso do teste:** commit `Sprint 4: validação de ponta a ponta concluída`
+e push. Task #41 fica pendente até esse commit.
+
+## Próximo: Sprint 5 — Anexos Multimodais
+
+Após Sprint 4 validado. Ver seção 11.2 do PRD. Entregas previstas:
+
+- Tabela `attachments` e bucket privado no Supabase Storage.
+- UI da janela de captura aceita anexos (paste, drag-drop, dialog).
+- Compressão de imagens/vídeos no client.
+- Edge Function processa anexos multimodais (imagens, PDFs, áudios, vídeos).
+- Extração enriquecida da descrição (ver RF-06b do PRD).
 
 ## Regras para você (Claude Code)
 
