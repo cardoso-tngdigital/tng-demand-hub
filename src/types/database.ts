@@ -78,3 +78,13 @@ export interface Attachment {
   uploaded_by: string | null;
   created_at: string;
 }
+
+export interface Comment {
+  id: string;
+  demand_id: string;
+  author_id: string;
+  content: string;
+  mentions: string[];
+  created_at: string;
+  updated_at: string;
+}

@@ -293,23 +293,38 @@ no dia a dia: vê detalhes, edita, filtra, alterna pra Kanban e busca.
   com blocos RF-06b aparece como texto bruto (preservando quebras).
   Plugar `react-markdown` ou equivalente quando vier polimento.
 
-## Próximo: Sprint 7 — Tempo Real e Notificações
-
-Ver PRD seção 11.2 e RFs 18–20.
+## Sprint 7 — em andamento (Tempo Real e Notificações)
 
 **Já entregue em sprints anteriores:**
 
-- Realtime nas tabelas `demands` e `activity_log` (Sprint 3) — Dashboard
-  e drawer já recebem updates em tempo real.
-- Indicador AO VIVO/offline no header (Sprint 3).
+- Realtime em `demands` e `activity_log` (Sprint 3) + indicador
+  AO VIVO/offline no header.
 
-**Faltam no Sprint 7:**
+### Fase 1 — Comentários (concluída)
 
-- Tabela `comments` (definida no PRD seção 6, ainda não criada) com RLS
-  e Realtime; UI de comentários no drawer (RF-23).
-- Notificações nativas via plugin Tauri (`tauri-plugin-notification`)
-  quando alguém atribui uma demanda a você ou comenta (RF-19).
-- Badge contador de demandas pendentes no tray icon (RF-20).
+- [x] Migration `comments` com RLS (membro ativo lê; autor escreve em
+      seu nome; autor edita/apaga, admin pode remover) e Realtime
+      habilitado
+- [x] `src/lib/comments.ts`: listComments, createComment, deleteComment,
+      subscribeToComments (filtrado por demand_id)
+- [x] Componente `CommentsThread` no drawer com lista + form de novo
+      comentário (`Cmd+Enter` envia); botão "remover" só nos próprios
+- [x] Insert otimista deduplicado pelo realtime
+
+**Follow-ups da fase de comentários:**
+
+- Ordenar comentários por mais recentes em cima (hoje vão ascendente,
+  então o mais novo cai pro fim). Trocar para `order desc` em
+  `listComments` e ajustar inserção otimista para `prepend`.
+- Indicador visual (📝 ou contador) nos cards de demanda que possuem
+  comentários — exige contar comments por demand_id, idealmente via
+  view ou coluna `comments_count` denormalizada.
+
+### Próximas fases
+
+- Fase 2 — Notificações nativas via `tauri-plugin-notification` quando
+  alguém atribui uma demanda a você ou comenta em demanda sua (RF-19)
+- Fase 3 — Badge contador no tray icon (RF-20)
 
 ## Regras para você (Claude Code)
 

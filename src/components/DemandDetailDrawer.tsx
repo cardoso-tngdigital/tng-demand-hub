@@ -8,6 +8,7 @@ import {
   getSignedUrl,
   listAttachments,
 } from "../lib/attachments";
+import { CommentsThread } from "./CommentsThread";
 import type { Attachment, Demand, DemandPriority, DemandStatus } from "../types/database";
 
 const STATUS_OPTIONS: { value: DemandStatus; label: string }[] = [
@@ -227,6 +228,10 @@ function DemandDetailBody({
 
         <Section title="Anexos">
           <AttachmentsList demandId={demand.id} />
+        </Section>
+
+        <Section title="Comentários">
+          <CommentsThread demandId={demand.id} profiles={profiles} />
         </Section>
 
         <Section title="Metadados">
