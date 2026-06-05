@@ -260,38 +260,56 @@ etc.).
   específicos. Investigar com chunked reader ou migrar PDFs para a
   Files API do Gemini.
 
-## Sprint 6 — em andamento (Dashboard Completo)
+## Sprint 6 — concluído (Dashboard Completo)
 
-Ver PRD seção 11.2 e RFs 12–16.
+Concluído em 2026-06-05. Cobre RFs 12–16. Dashboard agora é utilizável
+no dia a dia: vê detalhes, edita, filtra, alterna pra Kanban e busca.
 
-### Fase 1 — Painel de detalhes (concluída)
-
-- [x] Click numa demanda do Dashboard abre drawer lateral (520px)
-- [x] Mostra título, status, prioridade, descrição completa, cliente
-      (nome resolvido), responsável (nome resolvido), prazo, tags,
-      lista de anexos, metadados
-- [x] Anexos têm viewer embedded no app:
-      - imagens via `<img>`, áudios via `<audio controls>`, vídeos via
-        `<video controls>`, PDFs via `<iframe>` (webview renderiza
-        nativamente); demais tipos mostram botão "Baixar" via
-        `<a download>` interno (não abre browser externo)
-- [x] Esc fecha drawer e viewer
-- [x] Atualizações de realtime propagam automaticamente para a demanda
-      selecionada (state guarda só `selectedDemandId`)
-
-### Próximas fases
-
-- Fase 2 — Filtros no topo (status, cliente, responsável, prioridade)
-- Fase 3 — Edição inline (status/prioridade direto na linha + edição
-  completa dentro do drawer)
-- Fase 4 — Toggle Lista/Kanban com drag-and-drop entre colunas
-- Fase 5 — Busca global (`Cmd/Ctrl+K`)
+- [x] **Fase 1 — Painel de detalhes**: drawer 520px com todos os campos,
+      lista de anexos com viewer embedded (imagem/áudio/vídeo via tags
+      HTML5, PDF via `<iframe>`, demais via `<a download>` interno —
+      nunca abre browser externo)
+- [x] **Fase 2 — Filtros**: barra com status, prioridade, cliente e
+      responsável; "Sem cliente"/"Sem responsável" como opções
+      especiais; stats refletem o conjunto filtrado
+- [x] **Fase 3 — Edição inline**: todos os campos editáveis no drawer
+      (status/cliente/responsável/prioridade salvam ao mudar; descrição/
+      prazo/tags salvam no blur); hook `useDemandEditor` preserva
+      digitação local quando updates de realtime chegam
+- [x] **Fase 4 — Kanban com drag-and-drop**: toggle Lista/Kanban no
+      header, 4 colunas por status, cards arrastáveis entre elas via
+      HTML5 DnD nativo. Para liberar drag dentro do webview, setamos
+      `dragDropEnabled: false` em ambas as janelas do tauri.conf.json
+      (também resolveu o drop de arquivos do OS na captura, follow-up
+      antigo do Sprint 5). O `data-tauri-drag-region` foi confinado ao
+      header — antes engolia todo arrasto como "mover janela".
+- [x] **Fase 5 — Busca global**: `Cmd/Ctrl+K` abre command palette
+      estilo Linear; busca client-side em título/descrição/tags com
+      pontuação relevância; navegação por setas, Enter abre drawer
 
 ### Pendência específica desta sprint
 
 - **Renderização markdown da descrição** no drawer — hoje a descrição
   com blocos RF-06b aparece como texto bruto (preservando quebras).
   Plugar `react-markdown` ou equivalente quando vier polimento.
+
+## Próximo: Sprint 7 — Tempo Real e Notificações
+
+Ver PRD seção 11.2 e RFs 18–20.
+
+**Já entregue em sprints anteriores:**
+
+- Realtime nas tabelas `demands` e `activity_log` (Sprint 3) — Dashboard
+  e drawer já recebem updates em tempo real.
+- Indicador AO VIVO/offline no header (Sprint 3).
+
+**Faltam no Sprint 7:**
+
+- Tabela `comments` (definida no PRD seção 6, ainda não criada) com RLS
+  e Realtime; UI de comentários no drawer (RF-23).
+- Notificações nativas via plugin Tauri (`tauri-plugin-notification`)
+  quando alguém atribui uma demanda a você ou comenta (RF-19).
+- Badge contador de demandas pendentes no tray icon (RF-20).
 
 ## Regras para você (Claude Code)
 

@@ -1,0 +1,207 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Demand, DemandPriority, DemandStatus } from "../types/database";
+
+const STATUS_LABEL: Record<DemandStatus, string> = {
+  todo: "A fazer",
+  doing: "Em andamento",
+  done: "Concluída",
+  archived: "Arquivada",
+};
+
+const PRIORITY_DOT: Record<DemandPriority, string> = {
+  baixa: "bg-tng-marine-400",
+  media: "bg-sky-400",
+  alta: "bg-tng-orange-400",
+  urgente: "bg-red-500",
+};
+
+const MAX_RESULTS = 10;
+
+type Scored = { demand: Demand; score: number };
+
+/**
+ * Pontua a demanda contra a query. Maior é melhor; zero significa "fora".
+ * Match no título vale mais que descrição, que vale mais que tag.
+ */
+function scoreDemand(demand: Demand, q: string): number {
+  if (!q) return 1;
+  const norm = (s: string) => s.toLowerCase();
+  const query = norm(q);
+  let score = 0;
+  if (norm(demand.title).includes(query)) score += 5;
+  if (norm(demand.description).includes(query)) score += 3;
+  for (const tag of demand.tags) {
+    if (norm(tag).includes(query)) {
+      score += 2;
+      break;
+    }
+  }
+  return score;
+}
+
+export function SearchPalette({
+  open,
+  demands,
+  onClose,
+  onSelect,
+}: {
+  open: boolean;
+  demands: Demand[];
+  onClose: () => void;
+  onSelect: (demandId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Reseta input e foco quando abre
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    setActiveIndex(0);
+    const t = window.setTimeout(() => inputRef.current?.focus(), 30);
+    return () => window.clearTimeout(t);
+  }, [open]);
+
+  const results = useMemo<Scored[]>(() => {
+    const trimmed = query.trim();
+    return demands
+      .map((d) => ({ demand: d, score: scoreDemand(d, trimmed) }))
+      .filter((r) => r.score > 0)
+      .sort((a, b) => b.score - a.score || (a.demand.title || "").localeCompare(b.demand.title || ""))
+      .slice(0, MAX_RESULTS);
+  }, [demands, query]);
+
+  // Mantém o índice ativo dentro do range conforme os resultados mudam
+  useEffect(() => {
+    if (activeIndex >= results.length) {
+      setActiveIndex(Math.max(0, results.length - 1));
+    }
+  }, [results, activeIndex]);
+
+  if (!open) return null;
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.min(i + 1, results.length - 1));
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const chosen = results[activeIndex];
+      if (chosen) {
+        onSelect(chosen.demand.id);
+        onClose();
+      }
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-4 pt-24 backdrop-blur-sm"
+      onClick={onClose}
+      onKeyDown={handleKeyDown}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-xl overflow-hidden rounded-xl border border-tng-marine-600 bg-tng-marine-800 shadow-2xl"
+      >
+        <div className="flex items-center gap-3 border-b border-tng-marine-700 px-4 py-3">
+          <span className="text-tng-marine-400">🔍</span>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar demanda por título, descrição ou tag…"
+            className="flex-1 bg-transparent text-sm text-tng-marine-50 placeholder:text-tng-marine-400 focus:outline-none"
+          />
+          <kbd className="rounded bg-tng-marine-700 px-1.5 py-0.5 text-[10px] text-tng-marine-300">
+            esc
+          </kbd>
+        </div>
+
+        <div className="max-h-80 overflow-y-auto">
+          {results.length === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-tng-marine-400">
+              {query.trim() ? "Nada encontrado." : "Digite para buscar."}
+            </p>
+          ) : (
+            <ul>
+              {results.map((r, i) => (
+                <ResultRow
+                  key={r.demand.id}
+                  demand={r.demand}
+                  active={i === activeIndex}
+                  onMouseEnter={() => setActiveIndex(i)}
+                  onClick={() => {
+                    onSelect(r.demand.id);
+                    onClose();
+                  }}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-tng-marine-700 bg-tng-marine-800/60 px-4 py-2 text-[10px] text-tng-marine-400">
+          <span>
+            <kbd className="rounded bg-tng-marine-700 px-1 py-0.5">↑</kbd>{" "}
+            <kbd className="rounded bg-tng-marine-700 px-1 py-0.5">↓</kbd> navegar
+          </span>
+          <span>
+            <kbd className="rounded bg-tng-marine-700 px-1 py-0.5">↵</kbd> abrir
+          </span>
+          <span>{results.length} resultado{results.length === 1 ? "" : "s"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResultRow({
+  demand,
+  active,
+  onMouseEnter,
+  onClick,
+}: {
+  demand: Demand;
+  active: boolean;
+  onMouseEnter: () => void;
+  onClick: () => void;
+}) {
+  return (
+    <li
+      onMouseEnter={onMouseEnter}
+      onClick={onClick}
+      className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 transition ${
+        active ? "bg-tng-marine-700" : "hover:bg-tng-marine-700/40"
+      }`}
+    >
+      <span className={`h-2 w-2 shrink-0 rounded-full ${PRIORITY_DOT[demand.priority]}`} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-tng-marine-50">
+          {demand.title || demand.description.slice(0, 80)}
+        </p>
+        {demand.title && demand.description !== demand.title && (
+          <p className="truncate text-[10px] text-tng-marine-400">
+            {demand.description}
+          </p>
+        )}
+      </div>
+      <span className="shrink-0 rounded-full bg-tng-marine-700/80 px-2 py-0.5 text-[9px] uppercase tracking-wider text-tng-marine-200">
+        {STATUS_LABEL[demand.status]}
+      </span>
+    </li>
+  );
+}

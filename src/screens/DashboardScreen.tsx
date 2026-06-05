@@ -4,6 +4,7 @@ import { listDemands, subscribeToDemands } from "../lib/demands";
 import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileOption } from "../lib/lookups";
 import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
 import { KanbanBoard } from "../components/KanbanBoard";
+import { SearchPalette } from "../components/SearchPalette";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
 
@@ -84,6 +85,19 @@ export function DashboardScreen() {
   const [clientFilter, setClientFilter] = useState<RefFilter>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<RefFilter>("all");
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Atalho global Cmd/Ctrl+K abre a busca
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Carrega lookups uma vez
   useEffect(() => {
@@ -279,6 +293,13 @@ export function DashboardScreen() {
         clients={clients}
         profiles={profiles}
         onClose={() => setSelectedDemandId(null)}
+      />
+
+      <SearchPalette
+        open={searchOpen}
+        demands={demands}
+        onClose={() => setSearchOpen(false)}
+        onSelect={(id) => setSelectedDemandId(id)}
       />
     </div>
   );
