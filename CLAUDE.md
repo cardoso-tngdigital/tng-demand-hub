@@ -428,9 +428,19 @@ service_role key (cardoso.webdesign foi promovido em 2026-06-05).
   SQL manual. Se virar fricção, criar Edge Function tipo
   `bootstrap_admin` que aceita signup do primeiro user e o promove.
 
-### Próximas fases
+### Fase 3 — Painel de uso da IA (concluída)
 
-- Fase 3 — Painel de uso da IA (consumo mensal sobre ai_usage_log)
+- [x] `src/lib/aiUsage.ts` com `listUsageBetween`, agregações
+      (summarize/bucketByDay/bucketByUser) e conversão micro→USD
+- [x] `AiUsageAdmin` modal acessível por botão "Uso IA" no header:
+      seletor de mês (← →), 5 cards (chamadas, tokens IN/OUT, custo,
+      latência), histograma diário, ranking por usuário, e timeline
+      das últimas 30 chamadas com status/modelo/tokens/latência/custo
+- [x] Erros (status != success) destacados com borda vermelha;
+      tooltip mostra a mensagem completa
+
+### Próxima fase
+
 - Fase 4 — Auto-classificação (classification_rules)
 
 ## Regras para você (Claude Code)
