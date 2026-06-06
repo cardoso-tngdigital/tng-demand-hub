@@ -395,9 +395,41 @@ em dev quanto em release.
       são `<select>` com cadastros + opção "Sem". Dica em laranja
       avisa quando a IA sugeriu nome que não existe no cadastro.
 
+### Fase 2 — Gestão de membros (concluída)
+
+- [x] `src/lib/profiles.ts` com `listAllProfiles` e `updateProfile`
+      (usa `maybeSingle` para reportar "sem permissão" quando a RLS
+      rejeita o update em vez de explodir com "Cannot coerce")
+- [x] Componente `MembersAdmin` (modal fullscreen) acessível por
+      botão "Membros" no header: lista profiles com badges (você,
+      role, ativo/inativo), select de role e botão ativar/desativar
+- [x] Gating no client: detecta se `currentUser.role === "admin"`
+      pelo registro próprio na lista; non-admins veem aviso laranja
+      e todos os controles bloqueados; controles do próprio user
+      sempre bloqueados (evita lockout)
+- [x] Texto explicativo no topo orienta criar novos membros pelo
+      Supabase (Auth → Invite user) e ativar aqui
+
+**Sobre o user inicial**: a tabela `profiles` é populada via trigger
+no signup com `role` default `member` — quem cria a conta primeiro
+*não* vira admin automático. Promover o admin inicial via SQL:
+`update public.profiles set role='admin' where id='<uid>'` com
+service_role key (cardoso.webdesign foi promovido em 2026-06-05).
+
+**Follow-ups da fase de membros:**
+
+- Cliente recém-criado por um user não aparece no select da captura
+  quando outro user abre a janela flutuante na mesma sessão. Causa:
+  `CaptureScreen` carrega `clients`/`profiles` só no mount, mas a
+  janela `capture` do Tauri fica viva escondida entre invocações.
+  Solução: ou subscrever realtime de `clients` no capture, ou
+  refetch quando a janela é exibida (`tauri://focus`).
+- Cadastro do primeiro admin não tem flow de UI ainda — depende de
+  SQL manual. Se virar fricção, criar Edge Function tipo
+  `bootstrap_admin` que aceita signup do primeiro user e o promove.
+
 ### Próximas fases
 
-- Fase 2 — Gestão de membros (ativar/desativar, role admin/member)
 - Fase 3 — Painel de uso da IA (consumo mensal sobre ai_usage_log)
 - Fase 4 — Auto-classificação (classification_rules)
 
