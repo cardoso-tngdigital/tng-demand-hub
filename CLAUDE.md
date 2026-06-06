@@ -549,12 +549,22 @@ Se ela for perdida, **nenhuma máquina já instalada conseguirá mais
 receber updates** (o `pubkey` no app não confere mais). Fazer backup
 seguro (1Password / cofre da TNG) imediatamente.
 
-### Próximas fases
+### Fase 2 — Onboarding interativo (concluída)
 
-- Fase 2 — Onboarding interativo (3-4 telas no primeiro login)
-- Fase 3 — Tema claro/escuro funcional (já há `profiles.theme`, falta
-  aplicar no html)
-- Fase 4 — Code signing macOS (opcional; Apple Developer $99/ano)
+- [x] `OnboardingTour` com 4 slides (atalho global, anexos
+      multimodais, drawer/Kanban, busca+regras+notificações)
+- [x] Persistência via `localStorage["tng:onboarded:v1"]`; bumpar
+      a chave (`v2`, ...) força re-tour em mudanças grandes futuras
+- [x] Navegação por setas ← →, Esc/Pular fecha, "Começar" no último
+      slide marca como visto
+
+### Próxima fase
+
+- Fase 3 — Tema claro/escuro funcional (já há `profiles.theme`,
+  falta aplicar no html dinamicamente + revisar tokens)
+
+Code signing macOS foi descartado do escopo — para o uso interno da
+TNG, o "Cmd+click → Abrir" na primeira execução é suficiente.
 
 ## Regras para você (Claude Code)
 
