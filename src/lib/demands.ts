@@ -1,4 +1,5 @@
 import { supabase } from "./supabase/client";
+import { markLocalChange } from "./notifications";
 import type { Demand, NewDemandInput } from "../types/database";
 
 /**
@@ -82,6 +83,10 @@ export async function updateDemand(
   if (Object.keys(patch).length === 0) {
     return { data: null, error: "Nada para atualizar." };
   }
+
+  // Marca antes de chamar — quando o realtime entregar o eco do UPDATE,
+  // a notificação correspondente será suprimida (não notificamos quem fez).
+  markLocalChange(id);
 
   const { data, error } = await supabase
     .from("demands")

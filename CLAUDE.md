@@ -27,6 +27,9 @@ Documentos de referência (no diretório pai `../`):
 | Backend | Supabase (PostgreSQL + Auth + Storage + Realtime) |
 | Cliente Supabase | `@supabase/supabase-js` 2.x |
 | IA | Google Gemini 2.5 Flash (via Edge Function) |
+| Editor rich text | Tiptap 3 (`@tiptap/react` + StarterKit + Link + Placeholder) |
+| Sanitização HTML | isomorphic-dompurify |
+| Conversão markdown → HTML | `marked` (só para conteúdo legacy) |
 
 ## Identidade visual TNG
 
@@ -610,21 +613,60 @@ depende do volume).
 
 **Polimento de UX**
 
-6. Comentários: ordenar por mais recentes em cima (hoje vão
-   ascendente). Trocar `order` em `listComments` e ajustar insert
-   otimista para `prepend`. (Sprint 7)
-7. Indicador visual nos cards de demanda que possuem comentários
-   (📝 ou contador). Exige `comments_count` denormalizado ou view.
-   (Sprint 7)
-8. Renderização markdown da descrição no drawer — hoje aparece
-   como texto bruto preservando quebras. Plugar `react-markdown`
-   ou equivalente. (Sprint 6)
-9. Clicar na notificação nativa abre o drawer da demanda
-   correspondente. Tauri 2 expõe action listeners; precisa anexar
-   `demand_id` como payload e tratar no `lib.rs` / JS. (Sprint 7)
-10. Limpar badge do tray icon explicitamente no `signOut` (hoje
-    só zera ao desmontar o Dashboard, e em alguns caminhos o
-    componente persiste por um instante). (Sprint 7)
+~~6. Comentários: ordenar por mais recentes em cima.~~ ✅ Resolvido
+em 2026-06-06. `listComments` agora retorna `created_at desc`;
+insert otimista usa `prepend`.
+
+~~7. Indicador visual nos cards de demanda que possuem comentários.~~
+✅ Resolvido em 2026-06-06. Coluna `comments_count` em `demands`
+mantida por trigger em insert/delete de comments (migration
+`20260606000002_demands_comments_count.sql`). Badge `💬 N` nos
+cards da lista e do Kanban.
+
+~~8. Renderização markdown da descrição no drawer.~~ ✅ Substituído
+em 2026-06-06 por **editor WYSIWYG** baseado em Tiptap. Cobre o
+caso real de uso (colar mensagens já formatadas do WhatsApp/email/
+Slack — sintaxe markdown manual seria fricção). Banco passa a
+guardar HTML sanitizado em `demands.description` e `comments.content`;
+conteúdo legacy (texto puro ou markdown da IA) é convertido on-read
+via `legacyToHtml` em `src/lib/htmlContent.ts` (idempotente).
+Sanitização defensiva via DOMPurify antes de gravar e antes de
+renderizar. Toolbar: B, I, S, code, listas, links; modo `full` no
+drawer adiciona H2/H3 e blockquote.
+
+~~9. Clicar na notificação nativa abre o drawer da demanda
+correspondente.~~ ✅ Resolvido em 2026-06-06. O macOS não entrega
+click no body da notificação como evento JS; usamos foco recente
+da janela main (`onFocusChanged`) como proxy. `notifyAboutDemand`
+em `src/lib/notifications.ts` registra `{ demandId, at }` ao
+disparar a notificação; `subscribeToNotificationClick` ouve o
+focus e, se ele acontece em < 8s, chama o callback com o `demandId`.
+Dashboard subscreve e seta `selectedDemandId`.
+
+Limitações conhecidas:
+- Quando o user dá Cmd+Tab pro app dentro dessa janela, o drawer
+  da última notificação abre — aceitável dado o fluxo.
+- Quando a notificação chega com o app **já focado** (raro: outro
+  user te atribui exatamente enquanto você está usando o app), o
+  click no banner não muda o foco e o drawer não abre. Evolução
+  futura: registrar action buttons no Tauri plugin pra capturar
+  click determinístico.
+
+**Supressão de auto-notificação**: quando o próprio user faz a
+mudança (atribui-se via drawer, comenta, etc.), o realtime traz
+o eco em milissegundos — sem suppressão ele seria notificado
+pela própria ação. `markLocalChange(demandId)` é chamada em
+`updateDemand`; o Dashboard checa `wasLocalChange()` antes de
+notificar reassign. Para comments, a checagem `author_id === me`
+já cobre.
+
+**Som**: `sound: 'default'` em todas as notificações usa o som
+do sistema (macOS: Pop/Funk, Windows: ms-winsoundevent default).
+
+~~10. Limpar badge do tray icon explicitamente no `signOut`.~~
+✅ Resolvido em 2026-06-06. `useAuth.signOut` chama `setTrayBadge(0)`
+antes do `supabase.auth.signOut()` — garante que o ícone fica limpo
+mesmo se o Dashboard demorar pra desmontar.
 11. Tela de Uso da IA: exibir mensagem de erro completa em painel
     lateral ao clicar na linha — hoje só aparece no `title`
     (tooltip), não dá pra copiar. (Sprint 8)

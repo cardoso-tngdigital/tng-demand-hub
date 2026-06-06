@@ -8,7 +8,7 @@ export async function listComments(
     .from("comments")
     .select("*")
     .eq("demand_id", demandId)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: false });
 
   if (error) {
     console.error("[comments] list failed:", error);

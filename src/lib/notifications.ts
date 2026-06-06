@@ -1,8 +1,33 @@
+// =============================================================================
+// Notificações nativas + correlação com a demanda alvo
+// =============================================================================
+// O tauri-plugin-notification dispara banner do sistema, mas o click no body
+// da notificação não vira evento JS no macOS — só foca a janela do app. Isso
+// nos obriga a correlacionar "qual demanda gerou a última notificação" com
+// o `tauri://focus` da janela main.
+//
+// Estratégia:
+//   1. Toda notificação ligada a uma demanda passa por `notifyAboutDemand`,
+//      que registra `{ demandId, at }` em estado de módulo.
+//   2. `subscribeToNotificationClick` ouve o focus da janela main; se ele
+//      acontece pouco tempo (< 8s) depois da notificação, considera que foi
+//      clique e entrega o `demandId` pendente ao callback.
+//
+// Limitações conhecidas:
+//   - Se o user dá Cmd+Tab pra app dentro da janela de 8s, a app vai abrir
+//     o drawer da última notificação — comportamento aceitável (a chance é
+//     baixa e o resultado é "mostrar algo relevante", não destrutivo).
+//   - Apenas a notificação mais recente é correlacionada. Se chegam duas em
+//     <1s e o user clica na primeira, vai abrir a segunda. Para o uso real
+//     (~10 pessoas, fluxo de demandas) é raro.
+// =============================================================================
+
 import {
   isPermissionGranted,
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 let cachedPermission: "granted" | "denied" | "unknown" = "unknown";
 
@@ -26,8 +51,120 @@ export async function notify(title: string, body?: string): Promise<void> {
   const ok = await ensureNotificationPermission();
   if (!ok) return;
   try {
-    sendNotification({ title, body });
+    // sound: 'default' usa o som de notificação do sistema (macOS: Pop/Funk,
+    // Windows: ms-winsoundevent default). Sem isso a notif é silenciosa.
+    sendNotification({ title, body, sound: "default" });
   } catch (err) {
     console.error("[notifications] send failed:", err);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Supressão de auto-notificação
+// ---------------------------------------------------------------------------
+// Quando o próprio user faz uma mudança (atribui-se, comenta, etc.), o
+// realtime traz o UPDATE/INSERT de volta pra ele em milissegundos. Sem
+// suppressão, ele recebe notificação por uma ação que acabou de fazer.
+// Mantemos um cache de demand_ids "marcados" nos últimos LOCAL_CHANGE_TTL_MS
+// e pulamos a notificação enquanto a marca está fresca.
+
+const LOCAL_CHANGE_TTL_MS = 3000;
+const localChanges = new Map<string, number>();
+
+export function markLocalChange(demandId: string): void {
+  localChanges.set(demandId, Date.now());
+  // Limpa entradas velhas eventualmente — evita crescer indefinidamente.
+  if (localChanges.size > 64) {
+    const now = Date.now();
+    for (const [id, at] of localChanges) {
+      if (now - at > LOCAL_CHANGE_TTL_MS) localChanges.delete(id);
+    }
+  }
+}
+
+export function wasLocalChange(demandId: string): boolean {
+  const at = localChanges.get(demandId);
+  if (at === undefined) return false;
+  if (Date.now() - at > LOCAL_CHANGE_TTL_MS) {
+    localChanges.delete(demandId);
+    return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Correlação click → demanda
+// ---------------------------------------------------------------------------
+
+const CLICK_WINDOW_MS = 8000;
+
+type Pending = { demandId: string; at: number };
+
+let pending: Pending | null = null;
+
+export async function notifyAboutDemand(
+  title: string,
+  body: string,
+  demandId: string,
+): Promise<void> {
+  pending = { demandId, at: Date.now() };
+  await notify(title, body);
+}
+
+/**
+ * Ouve focos na janela main e, quando o foco chega logo após uma notificação,
+ * entrega o demandId ao callback. Devolve função pra cancelar.
+ *
+ * Escutamos por DUAS vias em paralelo porque cada uma falha em casos
+ * diferentes no Tauri 2 + macOS:
+ *   - DOM focus event (window.addEventListener "focus") — dispara quando o
+ *     webview ganha foco; consistente entre plataformas.
+ *   - Tauri Window.onFocusChanged — dispara em transição focus/blur; mais
+ *     baixo nível, garante captura em casos onde DOM event não dispara
+ *     (alguns relaunches/reflows).
+ * O `pending` é consumido pela primeira que entregar, então não há risco
+ * de chamar `onClick` duas vezes para o mesmo evento.
+ */
+export function subscribeToNotificationClick(
+  onClick: (demandId: string) => void,
+): () => void {
+  let cancelled = false;
+  let unlistenTauri: (() => void) | null = null;
+
+  function flushIfPending(): void {
+    const p = pending;
+    if (!p) return;
+    if (Date.now() - p.at > CLICK_WINDOW_MS) {
+      pending = null;
+      return;
+    }
+    pending = null;
+    onClick(p.demandId);
+  }
+
+  // Via 1 — DOM
+  window.addEventListener("focus", flushIfPending);
+
+  // Via 2 — Tauri (best-effort; alguns ambientes podem não suportar)
+  (async () => {
+    try {
+      const win = getCurrentWindow();
+      const unlisten = await win.onFocusChanged(({ payload: focused }) => {
+        if (focused) flushIfPending();
+      });
+      if (cancelled) {
+        unlisten();
+      } else {
+        unlistenTauri = unlisten;
+      }
+    } catch (err) {
+      console.warn("[notifications] tauri focus listener unavailable:", err);
+    }
+  })();
+
+  return () => {
+    cancelled = true;
+    window.removeEventListener("focus", flushIfPending);
+    if (unlistenTauri) unlistenTauri();
+  };
 }

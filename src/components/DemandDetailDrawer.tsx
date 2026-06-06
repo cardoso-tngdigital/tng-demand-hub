@@ -8,7 +8,9 @@ import {
   getSignedUrl,
   listAttachments,
 } from "../lib/attachments";
+import { htmlToPlainText, legacyToHtml, sanitizeHtml } from "../lib/htmlContent";
 import { CommentsThread } from "./CommentsThread";
+import { RichTextEditor } from "./RichTextEditor";
 import type { Attachment, Demand, DemandPriority, DemandStatus } from "../types/database";
 
 const STATUS_OPTIONS: { value: DemandStatus; label: string }[] = [
@@ -140,7 +142,7 @@ function DemandDetailBody({
             <SaveIndicator saving={editor.saving} error={editor.error} />
           </div>
           <h2 className="mt-2 font-sans text-base font-semibold text-tng-marine-50">
-            {demand.title || demand.description.slice(0, 80)}
+            {demand.title || demandPreview(demand.description)}
           </h2>
         </div>
         <button
@@ -154,12 +156,13 @@ function DemandDetailBody({
 
       <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
         <Section title="Descrição">
-          <textarea
+          <RichTextEditor
             value={editor.draft.description}
-            onChange={(e) => editor.setField("description", e.target.value)}
+            onChange={(html) => editor.setField("description", html)}
             onBlur={() => editor.flush("description")}
-            rows={6}
-            className="block w-full resize-y rounded-md border border-tng-marine-600 bg-tng-marine-800 px-3 py-2 text-sm leading-relaxed text-tng-marine-100 placeholder:text-tng-marine-400 focus:border-tng-orange-400 focus:outline-none"
+            placeholder="Descreva a demanda…"
+            variant="full"
+            minHeight={180}
           />
         </Section>
 
@@ -258,12 +261,21 @@ type DraftFields = "description" | "tags" | "due_date";
 
 type Draft = { description: string; tags: string; due_date: string };
 
+// Description vira HTML no draft. Conteúdo legacy do banco (markdown que a
+// IA escreveu ou texto puro de capturas antigas) é normalizado pra HTML
+// na entrada — assim o editor sempre recebe HTML e a comparação de
+// baseline para flush funciona sem falsos positivos.
 function draftFromDemand(d: Demand): Draft {
   return {
-    description: d.description,
+    description: legacyToHtml(d.description),
     tags: d.tags.join(", "),
     due_date: d.due_date ?? "",
   };
+}
+
+function demandPreview(htmlOrLegacy: string): string {
+  const text = htmlToPlainText(legacyToHtml(htmlOrLegacy));
+  return text.slice(0, 80);
 }
 
 function useDemandEditor(demand: Demand) {
@@ -322,7 +334,9 @@ function useDemandEditor(demand: Demand) {
       } else if (field === "due_date") {
         patch = { due_date: current.trim() || null };
       } else {
-        patch = { description: current };
+        // Defesa em camada: sanitiza HTML antes de gravar (apesar do schema do
+        // Tiptap já limitar tags, paste exótico pode escapar em casos raros).
+        patch = { description: sanitizeHtml(current) };
       }
       await save(patch);
     },

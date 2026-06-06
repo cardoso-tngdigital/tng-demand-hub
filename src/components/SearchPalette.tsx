@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 
 const STATUS_LABEL: Record<DemandStatus, string> = {
@@ -29,7 +30,8 @@ function scoreDemand(demand: Demand, q: string): number {
   const query = norm(q);
   let score = 0;
   if (norm(demand.title).includes(query)) score += 5;
-  if (norm(demand.description).includes(query)) score += 3;
+  // Descrição é HTML/markdown — busca no texto plano.
+  if (norm(htmlToPlainText(legacyToHtml(demand.description))).includes(query)) score += 3;
   for (const tag of demand.tags) {
     if (norm(tag).includes(query)) {
       score += 2;
@@ -191,11 +193,11 @@ function ResultRow({
       <span className={`h-2 w-2 shrink-0 rounded-full ${PRIORITY_DOT[demand.priority]}`} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium text-tng-marine-50">
-          {demand.title || demand.description.slice(0, 80)}
+          {demand.title || htmlToPlainText(legacyToHtml(demand.description)).slice(0, 80)}
         </p>
-        {demand.title && demand.description !== demand.title && (
+        {demand.title && demand.description && (
           <p className="truncate text-[10px] text-tng-marine-400">
-            {demand.description}
+            {htmlToPlainText(legacyToHtml(demand.description))}
           </p>
         )}
       </div>

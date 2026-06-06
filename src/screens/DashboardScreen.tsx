@@ -2,8 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { listDemands, subscribeToDemands } from "../lib/demands";
 import { subscribeToAllCommentInserts } from "../lib/comments";
-import { ensureNotificationPermission, notify } from "../lib/notifications";
+import {
+  ensureNotificationPermission,
+  notifyAboutDemand,
+  subscribeToNotificationClick,
+  wasLocalChange,
+} from "../lib/notifications";
 import { setTrayBadge } from "../lib/tray";
+import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
 import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileOption } from "../lib/lookups";
 import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
 import { KanbanBoard } from "../components/KanbanBoard";
@@ -81,7 +87,9 @@ function formatRelative(iso: string): string {
 }
 
 function demandLabel(d: { title: string; description: string }): string {
-  return d.title || d.description.slice(0, 80);
+  if (d.title) return d.title;
+  const text = htmlToPlainText(legacyToHtml(d.description));
+  return text.slice(0, 80);
 }
 
 export function DashboardScreen() {
@@ -172,6 +180,15 @@ export function DashboardScreen() {
     void ensureNotificationPermission();
   }, []);
 
+  // Clique em notificação nativa → abre o drawer da demanda correspondente.
+  // O macOS não entrega o click como evento JS no body da notificação; usamos
+  // foco recente da janela main como proxy (ver notifications.ts).
+  useEffect(() => {
+    return subscribeToNotificationClick((demandId) => {
+      setSelectedDemandId(demandId);
+    });
+  }, []);
+
   // Limpa o badge ao desmontar (sair do Dashboard / signOut)
   useEffect(() => {
     return () => {
@@ -222,18 +239,21 @@ export function DashboardScreen() {
         return prev;
       });
 
-      // Notifica reatribuição para o usuário atual
+      // Notifica reatribuição para o usuário atual — exceto quando fui eu
+      // mesmo que fez a mudança (caso comum: o user se atribui pelo drawer).
       const me = currentUserIdRef.current;
       if (
         event === "UPDATE" &&
         change.new &&
         me &&
         change.new.assignee_id === me &&
-        change.old?.assignee_id !== me
+        change.old?.assignee_id !== me &&
+        !wasLocalChange(change.new.id)
       ) {
-        void notify(
+        void notifyAboutDemand(
           "Demanda atribuída a você",
           demandLabel(change.new),
+          change.new.id,
         );
       }
     });
@@ -255,9 +275,10 @@ export function DashboardScreen() {
       const demand = demandsRef.current.find((d) => d.id === comment.demand_id);
       if (!demand) return;
       if (demand.assignee_id !== me && demand.created_by !== me) return;
-      void notify(
+      void notifyAboutDemand(
         `Novo comentário em "${demandLabel(demand)}"`,
-        comment.content.slice(0, 140),
+        htmlToPlainText(legacyToHtml(comment.content)).slice(0, 140),
+        demand.id,
       );
     });
     return unsubscribe;
@@ -663,6 +684,11 @@ function Stat({
 }
 
 function DemandCard({ demand, onSelect }: { demand: Demand; onSelect: () => void }) {
+  const previewText = htmlToPlainText(legacyToHtml(demand.description));
+  const title = demand.title || previewText.slice(0, 80);
+  const showPreview =
+    previewText.length > title.length && previewText.slice(0, title.length) !== title;
+
   return (
     <li
       onClick={onSelect}
@@ -683,17 +709,21 @@ function DemandCard({ demand, onSelect }: { demand: Demand; onSelect: () => void
               className={`h-2 w-2 shrink-0 rounded-full ${PRIORITY_DOT[demand.priority]}`}
               title={`Prioridade: ${PRIORITY_LABEL[demand.priority]}`}
             />
-            <h3 className="truncate text-sm font-medium text-tng-marine-50">
-              {demand.title || demand.description.slice(0, 80)}
-            </h3>
+            <h3 className="truncate text-sm font-medium text-tng-marine-50">{title}</h3>
           </div>
-          {demand.description !== demand.title && demand.description.length > demand.title.length && (
-            <p className="mt-1 line-clamp-2 text-xs text-tng-marine-300">
-              {demand.description}
-            </p>
+          {showPreview && (
+            <p className="mt-1 line-clamp-2 text-xs text-tng-marine-300">{previewText}</p>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {demand.comments_count > 0 && (
+            <span
+              className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-200"
+              title={`${demand.comments_count} comentário${demand.comments_count === 1 ? "" : "s"}`}
+            >
+              💬 {demand.comments_count}
+            </span>
+          )}
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLE[demand.status]}`}
           >

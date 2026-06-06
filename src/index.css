@@ -77,3 +77,85 @@
     -webkit-app-region: no-drag;
   }
 }
+
+/* =============================================================================
+   Rich text editor / leitura — usado pelo Tiptap e por renderizações HTML
+   estáticas (CommentItem, descrição em modo leitura).
+   ============================================================================= */
+
+.prose-rich p {
+  margin: 0 0 0.5rem 0;
+}
+.prose-rich p:last-child {
+  margin-bottom: 0;
+}
+.prose-rich strong {
+  font-weight: 600;
+  color: var(--color-tng-marine-50);
+}
+.prose-rich em {
+  font-style: italic;
+}
+.prose-rich a {
+  color: var(--color-tng-orange-300);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-rich a:hover {
+  color: var(--color-tng-orange-200);
+}
+.prose-rich code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background-color: var(--color-tng-marine-700);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+}
+.prose-rich blockquote {
+  border-left: 3px solid var(--color-tng-marine-600);
+  padding-left: 0.75rem;
+  margin: 0.5rem 0;
+  color: var(--color-tng-marine-200);
+  font-style: italic;
+}
+.prose-rich ul,
+.prose-rich ol {
+  margin: 0.25rem 0 0.5rem 0;
+  padding-left: 1.25rem;
+}
+.prose-rich ul {
+  list-style: disc;
+}
+.prose-rich ol {
+  list-style: decimal;
+}
+.prose-rich li {
+  margin: 0.1rem 0;
+}
+.prose-rich h1,
+.prose-rich h2,
+.prose-rich h3 {
+  font-weight: 600;
+  color: var(--color-tng-marine-50);
+  margin: 0.75rem 0 0.25rem 0;
+  line-height: 1.25;
+}
+.prose-rich h2 {
+  font-size: 1rem;
+}
+.prose-rich h3 {
+  font-size: 0.9rem;
+}
+
+/* Placeholder do Tiptap — renderizado via data-attr no parágrafo vazio. */
+.rich-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--color-tng-marine-400);
+  pointer-events: none;
+  height: 0;
+}
+.rich-editor .ProseMirror:focus {
+  outline: none;
+}
+

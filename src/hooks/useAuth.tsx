@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
+import { setTrayBadge } from "../lib/tray";
 
 type AuthContextValue = {
   session: Session | null;
@@ -40,6 +41,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
+    // Zera o badge antes — o cleanup do useEffect do Dashboard só dispara no
+    // unmount, e dependendo de como a UI redireciona pra login o ícone pode
+    // ficar com o número do usuário anterior por um instante.
+    await setTrayBadge(0).catch(() => {});
     await supabase.auth.signOut();
   }
 
