@@ -558,13 +558,37 @@ seguro (1Password / cofre da TNG) imediatamente.
 - [x] Navegação por setas ← →, Esc/Pular fecha, "Começar" no último
       slide marca como visto
 
-### Próxima fase
+### Descartado do escopo
 
-- Fase 3 — Tema claro/escuro funcional (já há `profiles.theme`,
-  falta aplicar no html dinamicamente + revisar tokens)
+- Tema claro/escuro — exigiria refactor de cores em todos os
+  componentes (~sprint inteira), e dark mode já atende o time
+  interno. Manter como single-theme.
+- Code signing macOS — o "Cmd+click → Abrir" na primeira execução
+  é suficiente para os 10 colaboradores; não justifica os $99/ano
+  de Apple Developer no MVP.
 
-Code signing macOS foi descartado do escopo — para o uso interno da
-TNG, o "Cmd+click → Abrir" na primeira execução é suficiente.
+## Sprint 9 — concluído
+
+Concluído em 2026-06-06. Duas fases efetivamente entregues
+(CI/CD+auto-update e Onboarding). Sprint 10 destrava com isso —
+o app pode ser distribuído sem o admin precisar buildar e mandar
+DMG/MSI manualmente a cada update.
+
+Primeira release publicada: **v0.1.1**.
+
+## Próximo: Sprint 10 — Beta Interno e Ajustes Finais
+
+Ver PRD seção 11.2. Entregas previstas:
+
+- Distribuição para os 10 colaboradores (DMG + MSI já gerados pelo
+  workflow).
+- Coleta diária de feedback estruturada.
+- Ajustes de prompt do Gemini com base em capturas reais (RF-06b
+  está com bug conhecido: o modelo às vezes funde a transcrição na
+  descrição principal em vez de gerar bloco markdown separado).
+- Correção de bugs prioritários (lista dos follow-ups acumulados
+  abaixo).
+- Documentação de uso interna.
 
 ## Regras para você (Claude Code)
 
