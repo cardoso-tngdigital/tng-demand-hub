@@ -10,8 +10,16 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
-const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+// Lista ordenada de modelos a tentar. O primeiro é o preferido; em 429/503
+// caímos pro próximo automaticamente, devolvendo erro pro client só quando
+// todos falham. Cada modelo Gemini tem cota separada no free tier.
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+];
+const geminiEndpoint = (model: string) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
 // Preço aproximado em micro-dólares por token (1 micro = US$ 0.000001)
 // Gemini 2.0 Flash: ~$0.10 / 1M input tokens, ~$0.40 / 1M output tokens
@@ -176,41 +184,72 @@ Deno.serve(async (req: Request) => {
   }
 
   // -----------------------------------------------------------------------
-  // 4. Chama Gemini
+  // 4. Chama Gemini — tenta cada modelo da lista em ordem; falhas de cota
+  //    (429) e indisponibilidade temporária (503) caem para o próximo.
   // -----------------------------------------------------------------------
   let extracted: ExtractedDemand | null = null;
   let geminiError: string | null = null;
   let inputTokens = 0;
   let outputTokens = 0;
+  let modelUsed = GEMINI_MODELS[0];
+  const modelAttempts: string[] = [];
 
-  try {
-    const res = await fetch(`${GEMINI_ENDPOINT}?key=${geminiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 4096,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
-    });
+  const requestBody = JSON.stringify({
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 4096,
+      responseMimeType: "application/json",
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+  });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Gemini ${res.status}: ${errText.slice(0, 300)}`);
+  for (const model of GEMINI_MODELS) {
+    modelAttempts.push(model);
+    modelUsed = model;
+    try {
+      const res = await fetch(`${geminiEndpoint(model)}?key=${geminiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: requestBody,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        // 429 (cota) e 503 (indisponível) são retentáveis: pula pro próximo modelo
+        if ((res.status === 429 || res.status === 503) && model !== GEMINI_MODELS[GEMINI_MODELS.length - 1]) {
+          geminiError = `Gemini ${res.status} em ${model}: ${errText.slice(0, 120)}`;
+          console.warn(`[extract-demand] ${model} → ${res.status}, tentando próximo`);
+          continue;
+        }
+        throw new Error(`Gemini ${res.status} em ${model}: ${errText.slice(0, 300)}`);
+      }
+
+      const payload = await res.json();
+      inputTokens = payload.usageMetadata?.promptTokenCount ?? 0;
+      outputTokens = payload.usageMetadata?.candidatesTokenCount ?? 0;
+
+      const raw = payload.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!raw) throw new Error("Resposta do Gemini sem conteúdo");
+      extracted = JSON.parse(raw) as ExtractedDemand;
+      validateExtracted(extracted);
+      geminiError = null;
+      break;
+    } catch (err) {
+      geminiError = err instanceof Error ? err.message : String(err);
+      console.error("[extract-demand] erro:", geminiError);
+      // Sai do loop — erros não-retentáveis ou último modelo
+      break;
     }
+  }
 
-    const payload = await res.json();
-    inputTokens = payload.usageMetadata?.promptTokenCount ?? 0;
-    outputTokens = payload.usageMetadata?.candidatesTokenCount ?? 0;
-
-    const raw = payload.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!raw) throw new Error("Resposta do Gemini sem conteúdo");
-    extracted = JSON.parse(raw) as ExtractedDemand;
-    validateExtracted(extracted);
+  // Re-empacota o try/catch original pra manter o restante do código intacto
+  try {
+    if (extracted) {
+      // sucesso — já está populado
+    } else if (!geminiError) {
+      throw new Error("Nenhum modelo Gemini retornou resultado");
+    }
   } catch (err) {
     geminiError = err instanceof Error ? err.message : String(err);
     console.error("[extract-demand] erro:", geminiError);
@@ -224,16 +263,25 @@ Deno.serve(async (req: Request) => {
   // -----------------------------------------------------------------------
   // 5. Registra uso (com service_role contornando RLS)
   // -----------------------------------------------------------------------
+  // Quando fallback aconteceu, anexamos o registro dos modelos tentados
+  // ao error_message — no caso de success, só fica null se foi o primeiro.
+  const attemptsNote =
+    modelAttempts.length > 1
+      ? `tentativas: ${modelAttempts.join(" → ")}`
+      : null;
+
   await supabase.from("ai_usage_log").insert({
     user_id: user.id,
     operation: "extract",
-    model: GEMINI_MODEL,
+    model: modelUsed,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     cost_micro: costMicro,
     latency_ms: latencyMs,
     status: extracted ? "success" : "error",
-    error_message: geminiError,
+    error_message: extracted
+      ? (attemptsNote ?? null)
+      : [geminiError, attemptsNote].filter(Boolean).join(" · ") || null,
   });
 
   if (!extracted) {

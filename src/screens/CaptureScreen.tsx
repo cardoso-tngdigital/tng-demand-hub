@@ -375,6 +375,24 @@ function InputView(props: {
     return () => window.clearTimeout(id);
   }, []);
 
+  // Atalhos globais (window) — sobrevivem ao foco sair do textarea, ex.:
+  // depois de clicar em "Salvar mesmo assim" ou em links no rodapé de erro.
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        props.onCancel();
+      } else if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        const target = e.target as HTMLElement | null;
+        if (target?.tagName === "TEXTAREA") return; // textarea já trata
+        e.preventDefault();
+        props.onExtract();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props.onCancel, props.onExtract]);
+
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -444,9 +462,19 @@ function InputView(props: {
             <div className="h-2 w-2 rounded-full bg-tng-orange-400" />
             <span className="text-xs font-medium text-tng-marine-100">Nova captura</span>
           </div>
-          <span className="text-[10px] uppercase tracking-wider text-tng-marine-300">
-            ⌘⇧D
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-tng-marine-300">
+              ⌘⇧D
+            </span>
+            <button
+              type="button"
+              onClick={props.onCancel}
+              aria-label="Fechar"
+              className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         <textarea
@@ -632,22 +660,27 @@ function ConfirmView(props: {
     });
   }
 
-  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      props.onCancel();
+  // Atalhos globais (window) — Esc fecha, ⌘↵ confirma. Substituem o
+  // onKeyDown no div raiz, que só dispara quando o foco está no div.
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        props.onCancel();
+      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleConfirm();
+      }
     }
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      handleConfirm();
-    }
-  }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // handleConfirm fecha sobre o estado local — recriado a cada render;
+    // listamos as deps explícitas para evitar capturar valores antigos.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, assigneeId, prioridade, prazo, descricao, tags, props.onCancel]);
 
   return (
-    <div
-      className="flex h-screen items-center justify-center bg-tng-marine-900 p-0"
-      onKeyDown={handleKeyDown}
-    >
+    <div className="flex h-screen items-center justify-center bg-tng-marine-900 p-0">
       <div className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700">
         <div
           data-tauri-drag-region
@@ -657,12 +690,22 @@ function ConfirmView(props: {
             <div className="h-2 w-2 rounded-full bg-emerald-400" />
             <span className="text-xs font-medium text-tng-marine-100">Revisar captura</span>
           </div>
-          <button
-            onClick={props.onBack}
-            className="text-[10px] uppercase tracking-wider text-tng-marine-300 hover:text-tng-marine-100"
-          >
-            ← voltar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={props.onBack}
+              className="text-[10px] uppercase tracking-wider text-tng-marine-300 hover:text-tng-marine-100"
+            >
+              ← voltar
+            </button>
+            <button
+              type="button"
+              onClick={props.onCancel}
+              aria-label="Fechar"
+              className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {props.initial.appliedRules.length > 0 && (
