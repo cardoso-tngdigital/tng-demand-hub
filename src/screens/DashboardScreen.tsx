@@ -12,6 +12,7 @@ import { ClientsAdmin } from "../components/ClientsAdmin";
 import { MembersAdmin } from "../components/MembersAdmin";
 import { AiUsageAdmin } from "../components/AiUsageAdmin";
 import { RulesAdmin } from "../components/RulesAdmin";
+import { UpdateBanner } from "../components/UpdateBanner";
 import { listAllProfiles } from "../lib/profiles";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
@@ -309,6 +310,8 @@ export function DashboardScreen() {
 
   return (
     <div className="flex h-screen flex-col bg-tng-marine-900">
+      <UpdateBanner />
+
       {/* Header */}
       <header
         data-tauri-drag-region

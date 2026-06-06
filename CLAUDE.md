@@ -500,15 +500,61 @@ fundamentos de governança da equipe e auto-classificação operacional.
   modelos Gemini por enquanto. Documentar adapter por provider
   para destravar a inclusão depois.
 
-## Próximo: Sprint 9 — Polimento e Distribuição
+## Sprint 9 — em andamento (Polimento e Distribuição)
 
-Ver PRD seção 11.2. Entregas previstas:
+### Fase 1 — CI/CD + auto-update (em validação)
 
-- Auto-update via Tauri Updater.
-- Onboarding interativo de 4 telas.
-- Tema claro/escuro funcional.
-- Build assinado (ou instruções para abrir sem assinatura).
-- DMG (macOS) e MSI (Windows) gerados.
+- [x] `tauri-plugin-updater` + `tauri-plugin-process` integrados
+      (Rust, JS, capabilities)
+- [x] Par de chaves de assinatura gerado em `~/.tauri/`
+      (`tng-demand-hub.key` + `.pub`) — chave sem senha
+- [x] `pubkey` configurada em `tauri.conf.json` + endpoint apontando
+      para `latest.json` no GitHub Releases
+- [x] `bundle.createUpdaterArtifacts: true` para o build gerar os
+      artefatos do updater
+- [x] `src/lib/updater.ts` com `checkForUpdate()` (chama `check()` e
+      embala `downloadAndInstall()` + `relaunch()`)
+- [x] `UpdateBanner` no topo do Dashboard: checa no mount + a cada
+      30 min; mostra versão nova, botão "Atualizar e reiniciar" e
+      botão de adiar
+- [x] Workflow `.github/workflows/release.yml`: dispara em tags
+      `v*`, builda macOS aarch64+x86_64 e Windows com `tauri-action`,
+      cria GitHub Release com `latest.json`
+
+### Processo de release
+
+1. Bumpa a versão em `package.json` E `src-tauri/tauri.conf.json` E
+   `src-tauri/Cargo.toml` (todos devem ficar com a mesma versão).
+2. `git commit -am "chore: bump v0.X.Y"` + `git push`.
+3. `git tag v0.X.Y && git push origin v0.X.Y`.
+4. Workflow Release roda no GitHub Actions (~10-15 min). Quando
+   termina, há uma release com `.dmg` para Mac (arm e Intel) e
+   `.msi` para Windows + um `latest.json` assinado.
+5. Apps já instalados detectam em até 30 min (ou no próximo
+   relaunch); o `UpdateBanner` aparece e o usuário clica "Atualizar
+   e reiniciar".
+
+### Segredos necessários no GitHub
+
+- `TAURI_SIGNING_PRIVATE_KEY` — conteúdo de
+  `~/.tauri/tng-demand-hub.key` (chave privada minisign).
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — vazio (chave sem senha).
+
+`GITHUB_TOKEN` é fornecido automaticamente pelo Actions.
+
+### Atenção — chave privada
+
+A chave em `~/.tauri/tng-demand-hub.key` é o que assina os updates.
+Se ela for perdida, **nenhuma máquina já instalada conseguirá mais
+receber updates** (o `pubkey` no app não confere mais). Fazer backup
+seguro (1Password / cofre da TNG) imediatamente.
+
+### Próximas fases
+
+- Fase 2 — Onboarding interativo (3-4 telas no primeiro login)
+- Fase 3 — Tema claro/escuro funcional (já há `profiles.theme`, falta
+  aplicar no html)
+- Fase 4 — Code signing macOS (opcional; Apple Developer $99/ano)
 
 ## Regras para você (Claude Code)
 
