@@ -17,12 +17,15 @@ import {
   formatBytes,
   MAX_INLINE_TOTAL_BYTES,
   pendingToInlinePayload,
+  pickFilesNative,
   uploadAttachment,
   type PendingAttachment,
 } from "../lib/attachments";
 import {
   listActiveClients,
   listActiveProfiles,
+  subscribeToActiveClients,
+  subscribeToActiveProfiles,
   type ClientOption,
   type ProfileOption,
 } from "../lib/lookups";
@@ -106,9 +109,9 @@ export function CaptureScreen() {
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
 
-  // Carrega lookups e regras uma vez. Usados no matching de cliente/responsável
-  // extraído pela IA, aplicação de regras de auto-classificação e nos selects
-  // da tela de confirmação.
+  // Carrega lookups e regras no mount, depois subscreve realtime de clients
+  // e profiles para refletir CRUDs feitos em outras janelas/usuários sem
+  // exigir recarregar o app (a janela 'capture' fica viva escondida).
   useEffect(() => {
     (async () => {
       const [c, p, r] = await Promise.all([
@@ -120,6 +123,12 @@ export function CaptureScreen() {
       setProfiles(p);
       setRules(r);
     })();
+    const unsubClients = subscribeToActiveClients(setClients);
+    const unsubProfiles = subscribeToActiveProfiles(setProfiles);
+    return () => {
+      unsubClients();
+      unsubProfiles();
+    };
   }, []);
 
   // Garante que object URLs criados para preview sejam liberados na desmontagem.
@@ -130,14 +139,16 @@ export function CaptureScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const addFiles = useCallback((files: FileList | File[]) => {
+  const addFiles = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files);
     if (list.length === 0) return;
     setError(null);
     const errors: string[] = [];
     const accepted: PendingAttachment[] = [];
+    // buildPendingAttachment materializa os bytes (await) — evita
+    // "I/O read operation failed" quando o File vem do clipboard e expira.
     for (const f of list) {
-      const result = buildPendingAttachment(f);
+      const result = await buildPendingAttachment(f);
       if ("error" in result) errors.push(`${f.name}: ${result.error}`);
       else accepted.push(result);
     }
@@ -341,6 +352,7 @@ export function CaptureScreen() {
       attachments={attachments}
       onAddFiles={addFiles}
       onRemoveAttachment={removeAttachment}
+      onPickerError={setError}
       busy={busy}
       error={error}
       onExtract={() => void runExtraction()}
@@ -358,8 +370,9 @@ function InputView(props: {
   text: string;
   onTextChange: (v: string) => void;
   attachments: PendingAttachment[];
-  onAddFiles: (files: FileList | File[]) => void;
+  onAddFiles: (files: FileList | File[]) => Promise<void>;
   onRemoveAttachment: (id: string) => void;
+  onPickerError: (msg: string) => void;
   busy: boolean;
   error: string | null;
   onExtract: () => void;
@@ -367,12 +380,19 @@ function InputView(props: {
   onManualSave: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
+  // Foca o textarea no mount e toda vez que a janela ganha foco — a
+  // janela 'capture' do Tauri fica viva escondida entre invocações do
+  // atalho global, então o useEffect roda só uma vez; sem o listener de
+  // focus, o usuário precisaria clicar pra digitar nas próximas aberturas.
   useEffect(() => {
-    const id = window.setTimeout(() => textareaRef.current?.focus(), 30);
-    return () => window.clearTimeout(id);
+    function focusTextarea() {
+      window.setTimeout(() => textareaRef.current?.focus(), 30);
+    }
+    focusTextarea();
+    window.addEventListener("focus", focusTextarea);
+    return () => window.removeEventListener("focus", focusTextarea);
   }, []);
 
   // Atalhos globais (window) — sobrevivem ao foco sair do textarea, ex.:
@@ -409,7 +429,7 @@ function InputView(props: {
     const files = e.clipboardData?.files;
     if (files && files.length > 0) {
       e.preventDefault();
-      props.onAddFiles(files);
+      void props.onAddFiles(files);
     }
   }
 
@@ -429,14 +449,16 @@ function InputView(props: {
     e.preventDefault();
     setDragOver(false);
     if (e.dataTransfer.files.length > 0) {
-      props.onAddFiles(e.dataTransfer.files);
+      void props.onAddFiles(e.dataTransfer.files);
     }
   }
 
-  function handleFilePickerChange(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files && e.target.files.length > 0) {
-      props.onAddFiles(e.target.files);
-      e.target.value = ""; // permite reescolher o mesmo arquivo
+  async function handlePickFiles() {
+    const { files, errors } = await pickFilesNative();
+    console.log("[InputView.handlePickFiles] files:", files.length, "errors:", errors);
+    if (files.length > 0) await props.onAddFiles(files);
+    if (errors.length > 0) {
+      props.onPickerError(errors.join(" · "));
     }
   }
 
@@ -508,7 +530,7 @@ function InputView(props: {
               <>📎 Cole, arraste arquivos ou{" "}
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => void handlePickFiles()}
                   className="underline-offset-2 hover:underline focus:underline focus:outline-none"
                 >
                   escolha
@@ -522,13 +544,6 @@ function InputView(props: {
               </>
             )}
           </span>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={handleFilePickerChange}
-          />
         </div>
 
         {props.error && (

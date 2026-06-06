@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { supabase } from "./supabase/client";
 import type { Attachment } from "../types/database";
 
@@ -95,20 +97,135 @@ export type PendingAttachment = {
   mime: string;
   category: AttachmentCategory;
   previewUrl: string | null;
+  /**
+   * Bytes do arquivo já lidos no momento da adição. Capturamos imediatamente
+   * para evitar "The I/O read operation failed" que acontece quando o File
+   * vem do clipboard / screenshot do macOS e a referência expira antes do
+   * envio. Também evita um segundo I/O na hora de preparar o payload da IA.
+   */
+  bytes: Uint8Array;
 };
 
-export function buildPendingAttachment(file: File): PendingAttachment | { error: string } {
+/**
+ * Lê um File como Uint8Array tentando duas estratégias: Blob.arrayBuffer()
+ * primeiro (Promise-based, moderno) e FileReader.readAsArrayBuffer como
+ * fallback. Alguns PDFs disparam "I/O read operation failed" no
+ * arrayBuffer() do WKWebView no Tauri, mas funcionam no FileReader antigo.
+ */
+async function fileToBytes(file: File): Promise<Uint8Array> {
+  console.log("[fileToBytes] iniciando para", file.name, "size:", file.size, "type:", file.type);
+  try {
+    const buf = await file.arrayBuffer();
+    console.log("[fileToBytes] arrayBuffer() OK,", buf.byteLength, "bytes");
+    return new Uint8Array(buf);
+  } catch (primaryErr) {
+    console.warn("[fileToBytes] arrayBuffer() falhou:", primaryErr, "— tentando FileReader");
+    try {
+      const result = await new Promise<Uint8Array>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const r = reader.result;
+          if (r instanceof ArrayBuffer) resolve(new Uint8Array(r));
+          else reject(new Error("FileReader não retornou ArrayBuffer"));
+        };
+        reader.onerror = () =>
+          reject(reader.error ?? new Error("FileReader falhou"));
+        reader.readAsArrayBuffer(file);
+      });
+      console.log("[fileToBytes] FileReader OK,", result.byteLength, "bytes");
+      return result;
+    } catch (fallbackErr) {
+      console.error("[fileToBytes] FileReader também falhou:", fallbackErr);
+      const msg =
+        primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+      const fmsg =
+        fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+      throw new Error(`${msg} (fallback FileReader: ${fmsg})`);
+    }
+  }
+}
+
+/**
+ * Abre o file picker nativo do Tauri e lê os arquivos via Rust
+ * (`read_file_bytes`), construindo File objects em memória. Esse caminho
+ * contorna o bug "I/O read operation failed" do WKWebView com certos
+ * PDFs vindos do `<input type="file">` HTML.
+ *
+ * Retorna `{ files, errors }`: arquivos lidos com sucesso + mensagens
+ * de erro por caminho que falhou (pra surfar na UI).
+ */
+export async function pickFilesNative(): Promise<{ files: File[]; errors: string[] }> {
+  console.log("[picker] abrindo dialog nativo");
+  let selected: string | string[] | null;
+  try {
+    selected = await openDialog({
+      multiple: true,
+      title: "Selecione arquivos para anexar",
+    });
+  } catch (err) {
+    console.error("[picker] dialog open falhou:", err);
+    return { files: [], errors: [`Dialog falhou: ${err instanceof Error ? err.message : String(err)}`] };
+  }
+  console.log("[picker] dialog retornou:", selected);
+  if (!selected) return { files: [], errors: [] };
+  const paths = Array.isArray(selected) ? selected : [selected];
+  const files: File[] = [];
+  const errors: string[] = [];
+  for (const path of paths) {
+    console.log("[picker] lendo via Rust:", path);
+    try {
+      const raw = await invoke<number[]>("read_file_bytes", { path });
+      console.log("[picker] read_file_bytes devolveu", raw?.length ?? "null", "bytes para", path);
+      if (!raw || raw.length === 0) {
+        errors.push(`${path}: leitura devolveu vazio`);
+        continue;
+      }
+      const bytes = new Uint8Array(raw);
+      const name = path.split(/[\\/]/).pop() || path;
+      const ext = name.split(".").pop()?.toLowerCase() ?? "";
+      const mime = EXTENSION_FALLBACK[ext] ?? "application/octet-stream";
+      const file = new File([bytes], name, { type: mime });
+      console.log("[picker] File criado:", { name, size: file.size, type: mime });
+      files.push(file);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[picker] read_file_bytes falhou para", path, ":", err);
+      errors.push(`${path.split(/[\\/]/).pop() ?? path}: ${msg}`);
+    }
+  }
+  console.log("[picker] resultado final:", { ok: files.length, err: errors.length });
+  return { files, errors };
+}
+
+export async function buildPendingAttachment(
+  file: File,
+): Promise<PendingAttachment | { error: string }> {
+  console.log("[buildPendingAttachment]", file.name, file.type, file.size, "bytes");
   const v = validateFile(file);
-  if (!v.ok) return { error: v.error };
+  if (!v.ok) {
+    console.warn("[buildPendingAttachment] validação falhou:", v.error);
+    return { error: v.error };
+  }
   const category = categorize(v.mime);
   const previewUrl = category === "image" ? URL.createObjectURL(file) : null;
-  return {
-    id: crypto.randomUUID(),
-    file,
-    mime: v.mime,
-    category,
-    previewUrl,
-  };
+  try {
+    const bytes = await fileToBytes(file);
+    console.log("[buildPendingAttachment] OK", file.name, bytes.byteLength, "bytes prontos");
+    return {
+      id: crypto.randomUUID(),
+      file,
+      mime: v.mime,
+      category,
+      previewUrl,
+      bytes,
+    };
+  } catch (err) {
+    console.error("[buildPendingAttachment] erro lendo bytes:", err);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    return {
+      error: `Falha ao ler o arquivo: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 export function disposePending(pa: PendingAttachment) {
@@ -140,9 +257,12 @@ export async function uploadAttachment(
   const ext = extensionFromFile(pending.file, pending.mime);
   const path = `${demandId}/${pending.id}.${ext}`;
 
+  // Reusa os bytes já materializados (mesma razão do PendingAttachment.bytes),
+  // empacotados como Blob para o cliente do Storage.
+  const blob = new Blob([new Uint8Array(pending.bytes)], { type: pending.mime });
   const { error: uploadError } = await supabase.storage
     .from("attachments")
-    .upload(path, pending.file, {
+    .upload(path, blob, {
       contentType: pending.mime,
       upsert: false,
     });
@@ -213,18 +333,15 @@ export type InlineAttachment = {
   base64: string;
 };
 
-/** Converte um File em base64 puro (sem o prefixo data:URI). */
-export function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Falha ao ler arquivo"));
-    reader.readAsDataURL(file);
-  });
+/** Converte bytes em base64 em chunks pra não estourar a stack. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000; // 32 KB por iteração
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const end = Math.min(i + chunkSize, bytes.length);
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, end)));
+  }
+  return btoa(binary);
 }
 
 export async function pendingToInlinePayload(
@@ -234,7 +351,7 @@ export async function pendingToInlinePayload(
     id: pending.id,
     fileName: pending.file.name,
     mimeType: pending.mime,
-    base64: await fileToBase64(pending.file),
+    base64: bytesToBase64(pending.bytes),
   };
 }
 

@@ -32,6 +32,50 @@ fn set_tray_badge(app: tauri::AppHandle, count: u32) {
     }
 }
 
+// Lê um arquivo do disco via std::fs (o webview do macOS falha com
+// "I/O read operation failed" em alguns PDFs). Devolve bytes brutos
+// que o frontend converte em File na memória.
+//
+// Faz até 3 tentativas com 2s de espera quando recebe ETIMEDOUT — caso
+// típico de arquivos "on-demand" no Google Drive File Stream / iCloud
+// Drive: a primeira leitura dispara o download em background e os
+// kernels do macOS retornam ETIMEDOUT em vez de bloquear até concluir.
+#[tauri::command]
+fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
+    let max_attempts = 3u32;
+    let mut last_error: Option<std::io::Error> = None;
+    for attempt in 1..=max_attempts {
+        match std::fs::read(&path) {
+            Ok(bytes) => return Ok(bytes),
+            Err(err) => {
+                let is_timeout = err.kind() == std::io::ErrorKind::TimedOut
+                    || err.raw_os_error() == Some(60);
+                if is_timeout && attempt < max_attempts {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    last_error = Some(err);
+                    continue;
+                }
+                return Err(format!(
+                    "{} (após {} tentativa{}{})",
+                    err,
+                    attempt,
+                    if attempt == 1 { "" } else { "s" },
+                    if path.contains("/CloudStorage/")
+                        || path.contains("/Mobile Documents/")
+                    {
+                        " — arquivo está no Google Drive ou iCloud. Marque \"Disponibilizar Offline\" no Finder e tente de novo"
+                    } else {
+                        ""
+                    }
+                ));
+            }
+        }
+    }
+    Err(last_error
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "Falha desconhecida ao ler arquivo".to_string()))
+}
+
 // Mostra (e foca) a janela de captura. Se já estiver visível, apenas foca.
 fn show_capture_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("capture") {
@@ -57,7 +101,12 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![hide_capture_window, set_tray_badge]);
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            hide_capture_window,
+            set_tray_badge,
+            read_file_bytes
+        ]);
 
     // Plugin de atalho global (apenas desktop)
     #[cfg(desktop)]
