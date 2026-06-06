@@ -3,12 +3,20 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { supabase } from "./supabase/client";
 import type { Attachment } from "../types/database";
 
-export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+// 200 MB. Antes era 50, mas com a Files API do Gemini agora aceitamos vídeos
+// reais (WhatsApp Forward, capturas de tela longa, etc.). Acima desse limite
+// o uso prático é raro o suficiente pra exigir conversa.
+export const MAX_FILE_SIZE = 200 * 1024 * 1024;
 
 // Tamanho cumulativo (bytes do arquivo original, antes do base64) dos anexos
 // enviados como inlineData à Edge Function. Mantemos margem segura abaixo do
 // limite de 12MB de base64 aceito pela função.
 export const MAX_INLINE_TOTAL_BYTES = 8 * 1024 * 1024;
+
+// Limite por arquivo individual para inline (base64 no body da chamada). Acima
+// disso, vai pelo fluxo Storage → Files API do Gemini, mais lento mas que
+// suporta arquivos grandes sem estourar o body da Edge Function.
+export const INLINE_PER_FILE_BYTES = 4 * 1024 * 1024;
 
 const ALLOWED_MIME_TYPES = new Set<string>([
   // Imagens
@@ -353,6 +361,144 @@ export async function pendingToInlinePayload(
     mimeType: pending.mime,
     base64: bytesToBase64(pending.bytes),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Arquivos grandes → Storage temporário → Files API do Gemini
+// ---------------------------------------------------------------------------
+
+/** Referência a um anexo já gravado no Storage temporário. */
+export type StorageAttachment = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  storagePath: string;
+  fileSizeBytes: number;
+};
+
+/** Path do arquivo no bucket attachments durante a fase pré-confirmação. */
+function tmpPath(
+  userId: string,
+  sessionId: string,
+  attachmentId: string,
+  ext: string,
+): string {
+  return `tmp/${userId}/${sessionId}/${attachmentId}.${ext}`;
+}
+
+/**
+ * Sobe o arquivo materializado pra `tmp/{user}/{session}/{id}.{ext}` no
+ * bucket attachments. O upload usa as policies já existentes (owner deve ser
+ * auth.uid()). Devolve a referência usada pela Edge Function pra montar a
+ * chamada da Files API.
+ */
+async function uploadPendingToTmp(
+  pending: PendingAttachment,
+  sessionId: string,
+  userId: string,
+): Promise<{ ok: true; payload: StorageAttachment } | { ok: false; error: string }> {
+  const ext = extensionFromFile(pending.file, pending.mime);
+  const path = tmpPath(userId, sessionId, pending.id, ext);
+  const blob = new Blob([new Uint8Array(pending.bytes)], { type: pending.mime });
+  const { error } = await supabase.storage
+    .from("attachments")
+    .upload(path, blob, { contentType: pending.mime, upsert: false });
+  if (error) {
+    return { ok: false, error: `Upload tmp falhou: ${error.message}` };
+  }
+  return {
+    ok: true,
+    payload: {
+      id: pending.id,
+      fileName: pending.file.name,
+      mimeType: pending.mime,
+      storagePath: path,
+      fileSizeBytes: pending.file.size,
+    },
+  };
+}
+
+export type MaterializedAttachments = {
+  inline: InlineAttachment[];
+  storage: StorageAttachment[];
+  sessionId: string;
+  errors: string[];
+};
+
+/**
+ * Decide, anexo a anexo, se vai como inlineData (rápido, < 4MB) ou pelo fluxo
+ * Storage + Files API (mais lento, mas suporta vídeos de WhatsApp). Sobe os
+ * grandes antes de retornar; os pequenos vão materializados como base64.
+ *
+ * O `sessionId` agrupa os anexos da mesma captura em `tmp/{user}/{session}/`
+ * pra facilitar cleanup futuro.
+ */
+export async function materializeAttachmentsForExtraction(
+  pendings: PendingAttachment[],
+  userId: string,
+): Promise<MaterializedAttachments> {
+  const sessionId = crypto.randomUUID();
+  const inline: InlineAttachment[] = [];
+  const storage: StorageAttachment[] = [];
+  const errors: string[] = [];
+
+  for (const p of pendings) {
+    if (p.file.size < INLINE_PER_FILE_BYTES) {
+      inline.push(await pendingToInlinePayload(p));
+    } else {
+      const res = await uploadPendingToTmp(p, sessionId, userId);
+      if (res.ok) {
+        storage.push(res.payload);
+      } else {
+        errors.push(`${p.file.name}: ${res.error}`);
+      }
+    }
+  }
+
+  return { inline, storage, sessionId, errors };
+}
+
+/**
+ * Após confirmar a captura, move o arquivo de `tmp/...` para o path final
+ * `{demand_id}/{attachment_id}.{ext}` e cria o registro em `attachments`.
+ * O `storage.move()` do Supabase é atômico (rename no S3-compatível).
+ */
+export async function uploadAttachmentFromTmp(
+  payload: StorageAttachment,
+  demandId: string,
+  userId: string,
+): Promise<UploadResult> {
+  const ext = payload.storagePath.split(".").pop() ?? "bin";
+  const finalPath = `${demandId}/${payload.id}.${ext}`;
+
+  const { error: moveError } = await supabase.storage
+    .from("attachments")
+    .move(payload.storagePath, finalPath);
+
+  if (moveError) {
+    return { ok: false, error: `Mover do tmp falhou: ${moveError.message}` };
+  }
+
+  const { data, error: insertError } = await supabase
+    .from("attachments")
+    .insert({
+      id: payload.id,
+      demand_id: demandId,
+      file_path: finalPath,
+      file_name: payload.fileName,
+      file_type: payload.mimeType,
+      file_size_bytes: payload.fileSizeBytes,
+      uploaded_by: userId,
+    })
+    .select()
+    .single();
+
+  if (insertError) {
+    await supabase.storage.from("attachments").remove([finalPath]).catch(() => {});
+    return { ok: false, error: `Registro falhou: ${insertError.message}` };
+  }
+
+  return { ok: true, attachment: data as Attachment };
 }
 
 export function categoryIcon(c: AttachmentCategory): string {

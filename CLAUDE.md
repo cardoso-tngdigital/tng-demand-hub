@@ -691,15 +691,34 @@ campos. Validação de schema rejeita resposta sem
 14. Extração local de DOCX/XLSX/TXT/CSV (`mammoth` + `sheetjs`).
     Hoje esses tipos podem ser anexados mas o Gemini não enxerga.
     (Sprint 5)
-15. Vídeos > ~8MB via Files API do Gemini (hoje estouram o limite
-    inline). (Sprint 5)
+~~15. Vídeos > ~8MB via Files API do Gemini.~~ ✅ Resolvido em
+2026-06-06. Anexos são divididos por tamanho:
+
+- **< 4MB cada** → `inlineData` como antes (rápido, sem upload extra)
+- **≥ 4MB cada** → upload prévio pra `attachments/tmp/{user}/{session}/`
+  no Supabase Storage, depois a Edge Function baixa via service_role
+  e sobe pra Files API do Gemini (uploadType=media), faz polling até
+  state=ACTIVE e usa `fileData.fileUri` no parts
+
+Limite por arquivo subiu de 50MB pra 200MB. Limite cumulativo inline
+continua em 8MB (só pros pequenos). Vídeos de WhatsApp típicos
+(15-30MB) agora funcionam.
+
+Fluxo de path no Storage: `tmp/{user}/{session}/{id}.{ext}` durante
+a fase de revisão; ao confirmar, `storage.move()` renomeia atomic
+para `{demand_id}/{attachment_id}.{ext}`. Se o usuário cancela a
+captura, `closeWindow` faz best-effort de apagar os órfãos do tmp.
+
+**Follow-up**: cron job pra limpar `tmp/*` mais velhos que 24h
+(captura abandonada que escapou do cleanup do closeWindow). Pode
+ser uma Edge Function agendada via Supabase scheduled functions ou
+pg_cron.
 
 **Convite e governança**
 
-16. Cadastro do primeiro admin sem flow de UI — hoje depende de
-    SQL manual (`update profiles set role='admin' where id=...`).
-    Se virar fricção, Edge Function `bootstrap_admin` ou marcar o
-    primeiro signup como admin automaticamente. (Sprint 8)
+~~16. Cadastro do primeiro admin sem flow de UI.~~ Descartado em
+2026-06-06. Cardoso já é admin neste Supabase; promover outros
+membros é SQL pontual que ele faz no painel. Sem fricção real.
 17. Convite por e-mail integrado no app (Edge Function chamando
     `auth.admin.inviteUserByEmail`). Hoje admin precisa convidar
     no painel do Supabase. (Sprint 8)

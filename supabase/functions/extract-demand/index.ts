@@ -44,9 +44,28 @@ type AttachmentPayload = {
   base64: string;
 };
 
+// Anexos grandes (>= ~4MB) entram pelo fluxo Storage → Files API. O client
+// faz upload prévio no path informado, e a Edge Function lê via service_role
+// + repassa para a Files API do Gemini.
+type StorageAttachmentPayload = {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  storage_path: string;
+};
+
 type ExtractRequest = {
   text: string;
   attachments?: AttachmentPayload[];
+  storage_attachments?: StorageAttachmentPayload[];
+};
+
+// Arquivo já carregado na Files API do Gemini, pronto pra usar no parts via
+// fileData.fileUri. Construído pela Edge Function pós upload+polling.
+type GeminiFileRef = {
+  uri: string;
+  mimeType: string;
+  fileName: string;
 };
 
 type Confianca = {
@@ -146,6 +165,20 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  const storageAttachments = Array.isArray(body.storage_attachments)
+    ? body.storage_attachments
+    : [];
+  for (const s of storageAttachments) {
+    if (
+      typeof s.id !== "string" ||
+      typeof s.file_name !== "string" ||
+      typeof s.mime_type !== "string" ||
+      typeof s.storage_path !== "string"
+    ) {
+      return json({ error: "storage_attachment com campos faltando" }, 400);
+    }
+  }
+
   // -----------------------------------------------------------------------
   // 3. Monta contexto da empresa
   // -----------------------------------------------------------------------
@@ -178,25 +211,74 @@ Deno.serve(async (req: Request) => {
       ?.map((m) => `- ${m.full_name}${m.area ? ` (${m.area})` : ""}`)
       .join("\n") ?? "(sem membros cadastrados)";
 
+  // -----------------------------------------------------------------------
+  // 3b. Anexos grandes via Files API do Gemini
+  // -----------------------------------------------------------------------
+  // Baixa cada anexo do Supabase Storage e sobe pra Files API. Roda em
+  // paralelo pra ganhar latência; um erro em qualquer um quebra a captura
+  // (o usuário pode tentar de novo ou seguir com fallback manual).
+  let geminiFiles: GeminiFileRef[] = [];
+  let storageStageError: string | null = null;
+
+  if (storageAttachments.length > 0) {
+    try {
+      geminiFiles = await Promise.all(
+        storageAttachments.map((s) =>
+          uploadStorageAttachmentToGemini({
+            supabase,
+            geminiKey,
+            payload: s,
+          }),
+        ),
+      );
+    } catch (err) {
+      storageStageError =
+        "Falha ao preparar anexo grande pra IA: " +
+        (err instanceof Error ? err.message : String(err));
+      console.error("[extract-demand]", storageStageError);
+    }
+  }
+
+  // Lista combinada na ordem em que vão pro prompt: inline primeiro, depois
+  // storage. Mantém numeração consistente entre prompt e parts.
+  const allAttachmentsForPrompt: Array<{ fileName: string; mimeType: string }> = [
+    ...attachments.map((a) => ({ fileName: a.fileName, mimeType: a.mimeType })),
+    ...geminiFiles.map((g) => ({ fileName: g.fileName, mimeType: g.mimeType })),
+  ];
+
   const prompt = buildPrompt({
     text,
     clientsList,
     membersList,
     isoDate,
     weekday,
-    attachments,
+    attachments: allAttachmentsForPrompt,
   });
 
-  // Cada anexo entra como uma parte inlineData logo após o prompt; a ordem
-  // do array é preservada e a lista enumerada no prompt usa esses mesmos índices.
+  // Parts na MESMA ordem do prompt: inline + fileData dos uploads grandes.
   const parts: Array<Record<string, unknown>> = [{ text: prompt }];
   for (const a of attachments) {
-    parts.push({
-      inlineData: {
-        mimeType: a.mimeType,
-        data: a.base64,
-      },
+    parts.push({ inlineData: { mimeType: a.mimeType, data: a.base64 } });
+  }
+  for (const g of geminiFiles) {
+    parts.push({ fileData: { mimeType: g.mimeType, fileUri: g.uri } });
+  }
+
+  // Se a preparação de Files API falhou, devolve erro antes de chamar o
+  // modelo — não faz sentido gastar tokens em uma chamada incompleta.
+  if (storageStageError) {
+    await supabase.from("ai_usage_log").insert({
+      user_id: user.id,
+      operation: "extract",
+      model: GEMINI_MODELS[0],
+      input_tokens: 0,
+      output_tokens: 0,
+      cost_micro: 0,
+      latency_ms: Date.now() - startedAt,
+      status: "error",
+      error_message: storageStageError,
     });
+    return json({ error: storageStageError, fallback: true }, 502);
   }
 
   // -----------------------------------------------------------------------
@@ -334,7 +416,7 @@ function buildPrompt(args: {
   membersList: string;
   isoDate: string;
   weekday: string;
-  attachments: AttachmentPayload[];
+  attachments: Array<{ fileName: string; mimeType: string }>;
 }): string {
   const attachmentsBlock = args.attachments.length === 0
     ? "(nenhum anexo nesta captura)"
@@ -444,6 +526,99 @@ INSTRUÇÕES:
 
 Nunca invente informação que não esteja na captura. Para campos não detectados,
 use null e confiança baixa.`;
+}
+
+// ---------------------------------------------------------------------------
+// Files API do Gemini — upload de anexo grande
+// ---------------------------------------------------------------------------
+// Fluxo:
+//   1. Baixa o arquivo do Supabase Storage (via service_role, bypass RLS).
+//   2. Sobe pra Files API do Gemini com `uploadType=media` (raw upload).
+//      Endpoint devolve { file: { uri, state, ... } }.
+//   3. Faz polling em GET /v1beta/files/{name} até state = "ACTIVE" ou
+//      timeout. Vídeos costumam levar 5-30s pra serem processados; áudios
+//      são mais rápidos.
+//
+// Não tentamos baixar paralelo + upload sequencial (ou vice-versa) — o
+// chamador já roda em paralelo via Promise.all.
+
+const GEMINI_FILES_UPLOAD_URL =
+  "https://generativelanguage.googleapis.com/upload/v1beta/files";
+
+const FILE_ACTIVE_TIMEOUT_MS = 45_000;
+const FILE_POLL_INTERVAL_MS = 1500;
+
+async function uploadStorageAttachmentToGemini(args: {
+  supabase: ReturnType<typeof createClient>;
+  geminiKey: string;
+  payload: StorageAttachmentPayload;
+}): Promise<GeminiFileRef> {
+  const { supabase, geminiKey, payload } = args;
+
+  // 1. Download do Storage.
+  const { data: blob, error: dlError } = await supabase.storage
+    .from("attachments")
+    .download(payload.storage_path);
+  if (dlError || !blob) {
+    throw new Error(
+      `download(${payload.storage_path}) falhou: ${dlError?.message ?? "blob nulo"}`,
+    );
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+
+  // 2. Upload pra Files API (raw).
+  const uploadRes = await fetch(
+    `${GEMINI_FILES_UPLOAD_URL}?key=${geminiKey}&uploadType=media`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": payload.mime_type,
+        "X-Goog-Upload-File-Name": payload.file_name,
+      },
+      body: bytes,
+    },
+  );
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text();
+    throw new Error(
+      `Files API upload ${uploadRes.status}: ${errText.slice(0, 200)}`,
+    );
+  }
+  const uploaded = await uploadRes.json();
+  const file = uploaded.file as { name: string; uri: string; state?: string } | undefined;
+  if (!file?.uri || !file?.name) {
+    throw new Error("Files API não devolveu uri/name");
+  }
+
+  // 3. Poll até ACTIVE.
+  let state = file.state ?? "PROCESSING";
+  const deadline = Date.now() + FILE_ACTIVE_TIMEOUT_MS;
+  while (state !== "ACTIVE" && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, FILE_POLL_INTERVAL_MS));
+    const pollRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/${file.name}?key=${geminiKey}`,
+    );
+    if (!pollRes.ok) {
+      const errText = await pollRes.text();
+      throw new Error(`poll ${pollRes.status}: ${errText.slice(0, 200)}`);
+    }
+    const polled = await pollRes.json();
+    state = polled.state ?? state;
+    if (state === "FAILED") {
+      throw new Error(`Files API state=FAILED para ${payload.file_name}`);
+    }
+  }
+  if (state !== "ACTIVE") {
+    throw new Error(
+      `Files API ainda em ${state} após ${FILE_ACTIVE_TIMEOUT_MS}ms — arquivo grande demais ou processamento lento`,
+    );
+  }
+
+  return {
+    uri: file.uri,
+    mimeType: payload.mime_type,
+    fileName: payload.file_name,
+  };
 }
 
 function validateRaw(e: RawExtraction): void {

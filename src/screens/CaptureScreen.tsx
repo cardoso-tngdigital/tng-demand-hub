@@ -10,16 +10,20 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { createDemand } from "../lib/demands";
 import { extractDemand, type ExtractedDemand } from "../lib/ai";
+import { supabase } from "../lib/supabase/client";
 import {
   buildPendingAttachment,
   categoryIcon,
   disposePending,
   formatBytes,
+  INLINE_PER_FILE_BYTES,
   MAX_INLINE_TOTAL_BYTES,
-  pendingToInlinePayload,
+  materializeAttachmentsForExtraction,
   pickFilesNative,
   uploadAttachment,
+  uploadAttachmentFromTmp,
   type PendingAttachment,
+  type StorageAttachment,
 } from "../lib/attachments";
 import {
   listActiveClients,
@@ -108,6 +112,12 @@ export function CaptureScreen() {
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
+  // pending.id → referência no Storage tmp (set por anexos grandes durante
+  // a extração). Usado depois pra decidir entre uploadAttachment (inline
+  // já materializado) vs uploadAttachmentFromTmp (apenas move).
+  const [storageMap, setStorageMap] = useState<Map<string, StorageAttachment>>(
+    () => new Map(),
+  );
 
   // Carrega lookups e regras no mount, depois subscreve realtime de clients
   // e profiles para refletir CRUDs feitos em outras janelas/usuários sem
@@ -170,6 +180,13 @@ export function CaptureScreen() {
 
   async function closeWindow() {
     attachments.forEach(disposePending);
+    // Best-effort: apaga arquivos órfãos no Storage tmp caso o usuário tenha
+    // gerado uploads e cancelado a captura. Falha silenciosa — o cleanup
+    // periódico do bucket pega o que sobrar.
+    const orphanPaths = Array.from(storageMap.values()).map((s) => s.storagePath);
+    if (orphanPaths.length > 0) {
+      void supabase.storage.from("attachments").remove(orphanPaths).catch(() => {});
+    }
     setText("");
     setAttachments([]);
     setExtracted(null);
@@ -177,6 +194,7 @@ export function CaptureScreen() {
     setError(null);
     setMode("input");
     setBusy(false);
+    setStorageMap(new Map());
     try {
       await invoke("hide_capture_window");
     } catch (err) {
@@ -195,11 +213,15 @@ export function CaptureScreen() {
       return;
     }
 
-    const totalBytes = attachments.reduce((sum, a) => sum + a.file.size, 0);
-    if (totalBytes > MAX_INLINE_TOTAL_BYTES) {
+    // Limite cumulativo só vale pros que vão inline (pequenos). Os grandes
+    // entram pela Files API e não competem por esse orçamento.
+    const inlineBytes = attachments
+      .filter((a) => a.file.size < INLINE_PER_FILE_BYTES)
+      .reduce((sum, a) => sum + a.file.size, 0);
+    if (inlineBytes > MAX_INLINE_TOTAL_BYTES) {
       const limitMb = Math.round(MAX_INLINE_TOTAL_BYTES / 1024 / 1024);
       setError(
-        `Anexos somam ${(totalBytes / 1024 / 1024).toFixed(1)} MB — a IA aceita até ${limitMb} MB no total. Remova ou reduza algum.`,
+        `Anexos pequenos somam ${(inlineBytes / 1024 / 1024).toFixed(1)} MB — a IA aceita até ${limitMb} MB inline. Remova ou reduza algum.`,
       );
       return;
     }
@@ -207,16 +229,34 @@ export function CaptureScreen() {
     setBusy(true);
     setError(null);
 
-    let inline;
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setBusy(false);
+      setError("Sessão expirada. Faça login novamente.");
+      return;
+    }
+
+    let materialized;
     try {
-      inline = await Promise.all(attachments.map(pendingToInlinePayload));
+      materialized = await materializeAttachmentsForExtraction(attachments, user.id);
     } catch (err) {
       setBusy(false);
       setError(`Falha ao preparar anexos: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
+    if (materialized.errors.length > 0) {
+      setBusy(false);
+      setError(`Falha no upload de anexo: ${materialized.errors.join(" · ")}`);
+      return;
+    }
 
-    const result = await extractDemand(trimmed, inline);
+    // Indexa os storage uploads — uploadAll precisa saber, ao fim, se cada
+    // anexo já está no Storage (move) ou ainda precisa ir (upload completo).
+    setStorageMap(new Map(materialized.storage.map((s) => [s.id, s])));
+
+    const result = await extractDemand(trimmed, materialized.inline, materialized.storage);
 
     setBusy(false);
 
@@ -258,14 +298,24 @@ export function CaptureScreen() {
   }
 
   /**
-   * Faz upload de cada anexo pendente em paralelo. Retorna mensagens de erro
-   * dos uploads que falharam; a demanda em si já está salva.
+   * Vincula cada anexo pendente à demanda recém-criada. Pequenos (inline)
+   * fazem upload completo agora; grandes (já no tmp do Storage) só são
+   * movidos pro path final via storage.move(). Falhas individuais não
+   * impedem as demais — a demanda em si já está salva.
    */
   async function uploadAll(demandId: string, userId: string): Promise<string[]> {
     if (attachments.length === 0) return [];
     const results = await Promise.all(
-      attachments.map((a) => uploadAttachment(a, demandId, userId)),
+      attachments.map((a) => {
+        const fromTmp = storageMap.get(a.id);
+        if (fromTmp) return uploadAttachmentFromTmp(fromTmp, demandId, userId);
+        return uploadAttachment(a, demandId, userId);
+      }),
     );
+    // Os arquivos do tmp já foram movidos pra path final pelo
+    // uploadAttachmentFromTmp; zeramos o mapa pra que o closeWindow
+    // não tente apagá-los como órfãos.
+    setStorageMap(new Map());
     return results
       .map((r, i) => (r.ok ? null : `${attachments[i].file.name}: ${r.error}`))
       .filter((m): m is string => m !== null);

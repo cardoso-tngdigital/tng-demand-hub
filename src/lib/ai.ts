@@ -1,6 +1,6 @@
 import { supabase } from "./supabase/client";
 import type { DemandPriority } from "../types/database";
-import type { InlineAttachment } from "./attachments";
+import type { InlineAttachment, StorageAttachment } from "./attachments";
 
 export type Confianca = {
   cliente: number;
@@ -39,6 +39,7 @@ export type ExtractionResult =
 export async function extractDemand(
   text: string,
   attachments: InlineAttachment[] = [],
+  storageAttachments: StorageAttachment[] = [],
 ): Promise<ExtractionResult> {
   try {
     const { data, error } = await supabase.functions.invoke<{
@@ -47,7 +48,18 @@ export async function extractDemand(
       error?: string;
       fallback?: boolean;
     }>("extract-demand", {
-      body: { text, attachments },
+      body: {
+        text,
+        attachments,
+        // Mantém snake_case na fronteira por convenção com a Edge Function
+        // (que segue Deno/Postgres). O client expõe camelCase.
+        storage_attachments: storageAttachments.map((s) => ({
+          id: s.id,
+          file_name: s.fileName,
+          mime_type: s.mimeType,
+          storage_path: s.storagePath,
+        })),
+      },
     });
 
     if (error) {
