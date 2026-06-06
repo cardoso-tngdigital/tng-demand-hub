@@ -3,6 +3,7 @@ import { useAuth } from "../hooks/useAuth";
 import { listDemands, subscribeToDemands } from "../lib/demands";
 import { subscribeToAllCommentInserts } from "../lib/comments";
 import { ensureNotificationPermission, notify } from "../lib/notifications";
+import { setTrayBadge } from "../lib/tray";
 import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileOption } from "../lib/lookups";
 import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
 import { KanbanBoard } from "../components/KanbanBoard";
@@ -129,6 +130,28 @@ export function DashboardScreen() {
   useEffect(() => {
     void ensureNotificationPermission();
   }, []);
+
+  // Limpa o badge ao desmontar (sair do Dashboard / signOut)
+  useEffect(() => {
+    return () => {
+      void setTrayBadge(0);
+    };
+  }, []);
+
+  // Conta minhas demandas pendentes (atribuídas a mim, abertas) e propaga
+  // pro tray icon. O contador se atualiza em tempo real via subscribe.
+  const pendingForMeCount = useMemo(() => {
+    if (!currentUserId) return 0;
+    return demands.filter(
+      (d) =>
+        d.assignee_id === currentUserId &&
+        (d.status === "todo" || d.status === "doing"),
+    ).length;
+  }, [demands, currentUserId]);
+
+  useEffect(() => {
+    void setTrayBadge(pendingForMeCount);
+  }, [pendingForMeCount]);
 
   // Referência sempre atualizada de demandas + user atual, usadas dentro
   // dos callbacks de realtime (que rodam fora do ciclo de render).

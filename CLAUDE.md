@@ -351,7 +351,38 @@ no dia a dia: vê detalhes, edita, filtra, alterna pra Kanban e busca.
   e tratar o evento no `lib.rs` (ou via `onAction` no JS) chamando
   setSelectedDemandId.
 
-### Fase 3 — Badge no tray icon (próxima)
+### Fase 3 — Badge no tray icon (concluída)
+
+- [x] Comando Rust `set_tray_badge(count)` que faz `tray.set_title()`;
+      vazio quando 0 para limpar a menubar
+- [x] Helper `src/lib/tray.ts` com `setTrayBadge(n)` via invoke
+- [x] Dashboard calcula `pendingForMeCount` (assignee = me e status
+      em todo/doing) e propaga ao tray em todo update; reativo via
+      realtime de demands
+- [x] Cleanup do useEffect zera o badge ao desmontar
+
+**Follow-up da fase 3:**
+
+- Limpar badge no `signOut` explicitamente (hoje o cleanup do
+  useEffect só dispara quando o Dashboard é desmontado; em alguns
+  caminhos de logout o componente persiste por um instante). Pode
+  ficar resolvido junto com a melhoria do fluxo de auth.
+
+## Sprint 7 — concluído
+
+Concluído em 2026-06-05. Todas as três fases entregues. Notificações
+nativas validadas em build de produção; em dev o macOS ignora
+silenciosamente (limitação do LaunchServices). Badge funciona tanto
+em dev quanto em release.
+
+## Próximo: Sprint 8 — Painel Admin e Gestão de Equipe
+
+Ver PRD seção 11.2. Entregas previstas:
+
+- Convite por e-mail de novo usuário (RF-03).
+- CRUD de clientes (RF-21).
+- Tela de uso da IA / consumo do mês (sobre ai_usage_log já existente).
+- Tabela `classification_rules` + tela de regras simples (RF-11).
 
 ## Regras para você (Claude Code)
 

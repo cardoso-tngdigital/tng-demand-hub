@@ -22,6 +22,16 @@ fn hide_capture_window(app: tauri::AppHandle) {
     }
 }
 
+// Atualiza o "badge" do tray icon: exibe o número junto ao ícone na menubar.
+// Quando count = 0, limpa o título.
+#[tauri::command]
+fn set_tray_badge(app: tauri::AppHandle, count: u32) {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let title = if count == 0 { None } else { Some(count.to_string()) };
+        let _ = tray.set_title(title.as_deref());
+    }
+}
+
 // Mostra (e foca) a janela de captura. Se já estiver visível, apenas foca.
 fn show_capture_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("capture") {
@@ -45,7 +55,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![hide_capture_window]);
+        .invoke_handler(tauri::generate_handler![hide_capture_window, set_tray_badge]);
 
     // Plugin de atalho global (apenas desktop)
     #[cfg(desktop)]
