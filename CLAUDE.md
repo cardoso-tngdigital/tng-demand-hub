@@ -667,16 +667,24 @@ do sistema (macOS: Pop/Funk, Windows: ms-winsoundevent default).
 ✅ Resolvido em 2026-06-06. `useAuth.signOut` chama `setTrayBadge(0)`
 antes do `supabase.auth.signOut()` — garante que o ícone fica limpo
 mesmo se o Dashboard demorar pra desmontar.
-11. Tela de Uso da IA: exibir mensagem de erro completa em painel
-    lateral ao clicar na linha — hoje só aparece no `title`
-    (tooltip), não dá pra copiar. (Sprint 8)
+~~11. Tela de Uso da IA: exibir mensagem de erro completa em painel
+lateral ao clicar na linha.~~ ✅ Resolvido em 2026-06-06. Drawer
+lateral 480px abre ao clicar em qualquer linha de "Últimas chamadas";
+mostra status, modelo, usuário, tokens, latência, custo e o
+`error_message` completo em `<pre>` com botão de copiar. Esc fecha.
 
 **Otimização e qualidade da IA**
 
-12. Consistência do bloco RF-06b — o Gemini às vezes funde a
-    transcrição na descrição principal em vez de gerar bloco
-    markdown separado. Refinar prompt ou migrar para
-    `responseSchema` formal. (Sprint 5)
+~~12. Consistência do bloco RF-06b.~~ ✅ Resolvido em 2026-06-06.
+Separamos a IA em dois campos distintos: `descricao_principal`
+(tarefa em si) e `descricao_anexos` (blocos por anexo). O prompt
+agora tem exemplo few-shot do certo E do errado, com instrução
+explícita "NÃO descreva anexos dentro de descricao_principal". A
+Edge Function junta os dois com `---` antes de devolver ao client,
+então o contrato externo (`descricao` string única) não muda.
+Resultado: o Gemini não tem mais ambiguidade entre os papéis dos
+campos. Validação de schema rejeita resposta sem
+`descricao_principal`.
 13. Compressão de imagem no client (`browser-image-compression`)
     antes do upload. Reduz storage e tempo de upload, especialmente
     em fotos de celular. (Sprint 5)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   bucketByDay,
   bucketByUser,
@@ -47,6 +47,7 @@ export function AiUsageAdmin({
   const [rows, setRows] = useState<AiUsageRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inspecting, setInspecting] = useState<AiUsageRow | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -237,12 +238,21 @@ export function AiUsageAdmin({
                   key={r.id}
                   row={r}
                   userName={r.user_id ? profileNameById.get(r.user_id) ?? null : null}
+                  onInspect={() => setInspecting(r)}
                 />
               ))}
             </ul>
           )}
         </section>
       </div>
+
+      <UsageDetailDrawer
+        row={inspecting}
+        userName={
+          inspecting?.user_id ? profileNameById.get(inspecting.user_id) ?? null : null
+        }
+        onClose={() => setInspecting(null)}
+      />
     </div>
   );
 }
@@ -267,37 +277,185 @@ function SummaryCard({
   );
 }
 
-function UsageItem({ row, userName }: { row: AiUsageRow; userName: string | null }) {
+function UsageItem({
+  row,
+  userName,
+  onInspect,
+}: {
+  row: AiUsageRow;
+  userName: string | null;
+  onInspect: () => void;
+}) {
   const isError = row.status !== "success";
   return (
-    <li
-      className={`flex items-center gap-3 rounded-md bg-tng-marine-800/40 px-3 py-1.5 text-[11px] ${
-        isError ? "border-l-2 border-red-500/60" : ""
-      }`}
-      title={row.error_message ?? undefined}
-    >
-      <span className="w-24 shrink-0 text-tng-marine-400">{formatTime(row.created_at)}</span>
-      <span
-        className={`w-14 shrink-0 text-[9px] uppercase tracking-wider ${
-          isError ? "text-red-300" : "text-emerald-300"
+    <li>
+      <button
+        type="button"
+        onClick={onInspect}
+        className={`flex w-full items-center gap-3 rounded-md bg-tng-marine-800/40 px-3 py-1.5 text-left text-[11px] transition hover:bg-tng-marine-800/80 hover:ring-1 hover:ring-tng-orange-400/40 ${
+          isError ? "border-l-2 border-red-500/60" : ""
         }`}
       >
-        {row.status}
-      </span>
-      <span className="w-32 shrink-0 truncate text-tng-marine-200">
-        {userName ?? "—"}
-      </span>
-      <span className="w-24 shrink-0 truncate text-tng-marine-300">{row.model}</span>
-      <span className="flex-1 truncate text-tng-marine-400">
-        {row.input_tokens}↓ · {row.output_tokens}↑
-        {row.error_message && ` · ${row.error_message.slice(0, 60)}`}
-      </span>
-      <span className="w-16 shrink-0 text-right text-tng-marine-200">
-        {row.latency_ms ?? "—"} ms
-      </span>
-      <span className="w-16 shrink-0 text-right text-tng-marine-300">
-        {formatUsd(microToUsd(row.cost_micro))}
-      </span>
+        <span className="w-24 shrink-0 text-tng-marine-400">{formatTime(row.created_at)}</span>
+        <span
+          className={`w-14 shrink-0 text-[9px] uppercase tracking-wider ${
+            isError ? "text-red-300" : "text-emerald-300"
+          }`}
+        >
+          {row.status}
+        </span>
+        <span className="w-32 shrink-0 truncate text-tng-marine-200">{userName ?? "—"}</span>
+        <span className="w-24 shrink-0 truncate text-tng-marine-300">{row.model}</span>
+        <span className="flex-1 truncate text-tng-marine-400">
+          {row.input_tokens}↓ · {row.output_tokens}↑
+          {row.error_message && ` · ${row.error_message.slice(0, 60)}`}
+        </span>
+        <span className="w-16 shrink-0 text-right text-tng-marine-200">
+          {row.latency_ms ?? "—"} ms
+        </span>
+        <span className="w-16 shrink-0 text-right text-tng-marine-300">
+          {formatUsd(microToUsd(row.cost_micro))}
+        </span>
+      </button>
     </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Drawer de detalhes — abre na lateral ao clicar numa linha de "Últimas
+// chamadas". Mostra error_message completo (com botão de copiar) e metadados
+// que não cabem na linha. Tooltip era a única forma antes; não dava pra
+// copiar nem ler erros longos.
+// ---------------------------------------------------------------------------
+
+function UsageDetailDrawer({
+  row,
+  userName,
+  onClose,
+}: {
+  row: AiUsageRow | null;
+  userName: string | null;
+  onClose: () => void;
+}) {
+  const open = row !== null;
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setCopied(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  async function handleCopy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("[ai-usage] copy failed:", err);
+    }
+  }
+
+  return (
+    <div
+      className={`fixed inset-0 z-[60] transition-opacity ${
+        open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+      }`}
+      aria-hidden={!open}
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <aside
+        className={`absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-tng-marine-700 bg-tng-marine-800 shadow-2xl transition-transform duration-200 ${
+          open ? "translate-x-0" : "translate-x-full"
+        }`}
+        role="dialog"
+        aria-modal="true"
+      >
+        {row && (
+          <>
+            <header className="flex items-start justify-between gap-3 border-b border-tng-marine-700 px-5 py-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+                      row.status === "success"
+                        ? "bg-emerald-500/15 text-emerald-300"
+                        : "bg-red-500/15 text-red-300"
+                    }`}
+                  >
+                    {row.status}
+                  </span>
+                  <span className="text-[11px] text-tng-marine-300">
+                    {formatTime(row.created_at)}
+                  </span>
+                </div>
+                <p className="mt-2 truncate font-sans text-sm font-semibold text-tng-marine-50">
+                  {row.model}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Fechar"
+                className="rounded-md p-1.5 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
+              >
+                ✕
+              </button>
+            </header>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-xs">
+              <DetailGrid
+                items={[
+                  ["Usuário", userName ?? row.user_id ?? "—"],
+                  ["Tokens entrada", row.input_tokens.toLocaleString("pt-BR")],
+                  ["Tokens saída", row.output_tokens.toLocaleString("pt-BR")],
+                  ["Latência", `${row.latency_ms ?? "—"} ms`],
+                  ["Custo estimado", formatUsd(microToUsd(row.cost_micro))],
+                ]}
+              />
+
+              {row.error_message ? (
+                <section>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <h4 className="text-[10px] uppercase tracking-wider text-tng-marine-300">
+                      Mensagem de erro
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(row.error_message ?? "")}
+                      className="rounded-md border border-tng-marine-600 px-2 py-0.5 text-[10px] text-tng-marine-200 hover:border-tng-orange-400 hover:text-tng-orange-400"
+                    >
+                      {copied ? "Copiado!" : "Copiar"}
+                    </button>
+                  </div>
+                  <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 font-mono text-[11px] text-red-200">
+                    {row.error_message}
+                  </pre>
+                </section>
+              ) : (
+                <p className="text-[11px] text-tng-marine-400">Chamada sem erros.</p>
+              )}
+            </div>
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function DetailGrid({ items }: { items: [string, string][] }) {
+  return (
+    <dl className="grid grid-cols-[110px_1fr] gap-y-1 text-[11px]">
+      {items.map(([k, v]) => (
+        <Fragment key={k}>
+          <dt className="text-tng-marine-300">{k}</dt>
+          <dd className="truncate text-tng-marine-100">{v}</dd>
+        </Fragment>
+      ))}
+    </dl>
   );
 }

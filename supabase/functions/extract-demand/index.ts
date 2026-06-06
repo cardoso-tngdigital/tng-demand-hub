@@ -56,6 +56,22 @@ type Confianca = {
   prazo: number;
 };
 
+// Resposta crua do Gemini: separamos descricao_principal e descricao_anexos
+// em campos distintos para forçar consistência do bloco RF-06b. O Gemini
+// ignorava regularmente a instrução "anexa um bloco" quando esses dados
+// dividiam o mesmo campo. A Edge Function faz a fusão depois — o client
+// recebe um único `descricao` como sempre.
+type RawExtraction = {
+  cliente: string | null;
+  responsavel: string | null;
+  prioridade: "baixa" | "media" | "alta" | "urgente";
+  prazo: string | null;
+  descricao_principal: string;
+  descricao_anexos: string | null;
+  tags: string[];
+  confianca: Confianca;
+};
+
 type ExtractedDemand = {
   cliente: string | null;
   responsavel: string | null;
@@ -231,8 +247,9 @@ Deno.serve(async (req: Request) => {
 
       const raw = payload.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!raw) throw new Error("Resposta do Gemini sem conteúdo");
-      extracted = JSON.parse(raw) as ExtractedDemand;
-      validateExtracted(extracted);
+      const rawExtraction = JSON.parse(raw) as RawExtraction;
+      validateRaw(rawExtraction);
+      extracted = mergeExtraction(rawExtraction);
       geminiError = null;
       break;
     } catch (err) {
@@ -325,42 +342,10 @@ function buildPrompt(args: {
         .map((a, i) => `${i + 1}. ${a.fileName} (${a.mimeType})`)
         .join("\n");
 
-  const enrichmentInstructions = args.attachments.length === 0
-    ? ""
-    : `
-
-4. ENRIQUECIMENTO DA DESCRIÇÃO (RF-06b) — obrigatório quando há anexos:
-
-   Os ${args.attachments.length} anexo(s) listado(s) acima vêm logo após este
-   prompt, na MESMA ORDEM. Use-os para gerar UM BLOCO por anexo, anexado ao
-   FIM do campo \`descricao\` após uma linha separadora "---". Não invente
-   anexos, não pule nenhum, e use SEMPRE o nome de arquivo informado.
-
-   Formato de cada bloco (markdown), conforme o tipo MIME do anexo:
-
-   • image/* — descrição visual breve do que aparece na imagem:
-     🖼️ {nome} — {1 frase descrevendo o conteúdo visual}
-
-   • audio/* — transcrição COMPLETA do áudio em português:
-     🎵 {nome}
-     > Transcrição: "{texto integral transcrito}"
-
-   • video/* — sinopse de 1-2 frases:
-     🎬 {nome}
-     > Sinopse: {1-2 frases resumindo o vídeo}
-
-   • application/pdf — título descritivo do conteúdo:
-     📄 {nome} — {1 frase sintetizando o documento}
-
-   Exemplo de descricao final com anexos:
-
-   Pedro precisa ajustar o banner do cliente Acme.
-
-   ---
-
-   🖼️ screenshot.png — Tela do checkout exibindo erro 500 no botão Finalizar.
-   🎵 audio.ogg
-   > Transcrição: "Oi pessoal, preciso que o banner do topo mude até quinta..."`;
+  const hasAttachments = args.attachments.length > 0;
+  const attachmentsRule = hasAttachments
+    ? `OBRIGATÓRIO porque há ${args.attachments.length} anexo(s). Para CADA anexo, gere UM bloco no formato abaixo, separado por uma linha em branco. NÃO descreva os anexos dentro de \`descricao_principal\` — esse campo é só sobre a tarefa em si.`
+    : `Deixe NULL. Não há anexos nesta captura.`;
 
   return `Você é um assistente da TNG Digital especializado em extrair informações
 estruturadas de capturas rápidas feitas pela equipe interna.
@@ -387,28 +372,67 @@ ${attachmentsBlock}
 
 INSTRUÇÕES:
 
-1. Extraia os seguintes campos:
+1. Extraia os campos:
    - cliente: nome do cliente mencionado, batendo com a lista (null se não houver).
    - responsavel: nome do membro da equipe (null se não houver atribuição clara).
-   - prioridade: inferir do tom (urgente/asap -> 'urgente'; importante -> 'alta';
-     quando puder -> 'baixa'; default 'media').
+   - prioridade: inferir do tom (urgente/asap → 'urgente'; importante → 'alta';
+     quando puder → 'baixa'; default 'media').
    - prazo: data ISO 8601 (YYYY-MM-DD). Interprete expressões relativas
      ('quinta', 'amanhã', 'fim do mês') usando a DATA DE REFERÊNCIA. Null se
      não houver menção.
-   - descricao: reescreva o conteúdo principal em frases claras, objetivas, em
-     terceira pessoa, descrevendo a tarefa a ser feita.
+   - descricao_principal: reescreva o que a equipe pediu em frases claras, em
+     terceira pessoa, descrevendo a tarefa. SEM mencionar anexos aqui.
+   - descricao_anexos: ${attachmentsRule}
    - tags: 1 a 3 palavras-chave curtas em kebab-case.
 
-2. Confiança de 0 a 1 para cada campo (exceto descricao e tags).
+2. Confiança de 0 a 1 para cliente, responsavel, prioridade, prazo.
 
-3. Retorne APENAS JSON válido no formato exato abaixo:
+3. REGRAS DOS BLOCOS DE ANEXO (campo \`descricao_anexos\`):
+
+   Para cada anexo, gere um bloco em markdown conforme o tipo MIME. Use o
+   NOME do arquivo informado (não invente nomes). Os blocos NÃO devem aparecer
+   em \`descricao_principal\` em hipótese alguma.
+
+   • image/* →
+     🖼️ {nome} — {1 frase descrevendo o conteúdo visual}
+
+   • audio/* →
+     🎵 {nome}
+     > Transcrição: "{texto integral transcrito em português}"
+
+   • video/* →
+     🎬 {nome}
+     > Sinopse: {1-2 frases resumindo o vídeo}
+
+   • application/pdf →
+     📄 {nome} — {1 frase sintetizando o documento}
+
+   • outros tipos →
+     📎 {nome} — {breve descrição se puder inferir; caso contrário só o nome}
+
+   EXEMPLO CORRETO (texto + 1 áudio + 1 imagem):
+
+   {
+     "descricao_principal": "Pedro precisa ajustar o banner do cliente Acme até quinta-feira.",
+     "descricao_anexos": "🎵 audio.ogg\\n> Transcrição: \\"Oi pessoal, preciso que o banner do topo mude até quinta-feira.\\"\\n\\n🖼️ screenshot.png — Tela atual do site da Acme mostrando o banner antigo no topo."
+   }
+
+   EXEMPLO INCORRETO (NUNCA faça isso — funde anexo na descricao_principal):
+
+   {
+     "descricao_principal": "Pedro pediu por áudio para ajustar o banner do cliente Acme. No áudio ele fala que precisa até quinta-feira. Na imagem screenshot.png aparece o banner antigo.",
+     "descricao_anexos": null
+   }
+
+4. Retorne APENAS JSON válido neste formato exato:
 
 {
   "cliente": "string | null",
   "responsavel": "string | null",
   "prioridade": "baixa | media | alta | urgente",
   "prazo": "YYYY-MM-DD | null",
-  "descricao": "string",
+  "descricao_principal": "string",
+  "descricao_anexos": "string | null",
   "tags": ["string"],
   "confianca": {
     "cliente": 0.0,
@@ -416,14 +440,23 @@ INSTRUÇÕES:
     "prioridade": 0.0,
     "prazo": 0.0
   }
-}${enrichmentInstructions}
+}
 
 Nunca invente informação que não esteja na captura. Para campos não detectados,
 use null e confiança baixa.`;
 }
 
-function validateExtracted(e: ExtractedDemand): void {
-  if (typeof e.descricao !== "string") throw new Error("Campo descricao ausente");
+function validateRaw(e: RawExtraction): void {
+  if (typeof e.descricao_principal !== "string" || !e.descricao_principal.trim()) {
+    throw new Error("Campo descricao_principal ausente ou vazio");
+  }
+  if (
+    e.descricao_anexos !== null &&
+    e.descricao_anexos !== undefined &&
+    typeof e.descricao_anexos !== "string"
+  ) {
+    throw new Error("Campo descricao_anexos deve ser string ou null");
+  }
   if (!["baixa", "media", "alta", "urgente"].includes(e.prioridade)) {
     throw new Error(`Prioridade inválida: ${e.prioridade}`);
   }
@@ -431,4 +464,21 @@ function validateExtracted(e: ExtractedDemand): void {
   if (!e.confianca || typeof e.confianca !== "object") {
     throw new Error("Campo confianca ausente");
   }
+}
+
+// Junta os dois campos da IA num único `descricao` antes de devolver ao
+// client. Separador "---" só aparece quando há bloco de anexos efetivo.
+function mergeExtraction(r: RawExtraction): ExtractedDemand {
+  const principal = r.descricao_principal.trim();
+  const anexos = (r.descricao_anexos ?? "").trim();
+  const descricao = anexos ? `${principal}\n\n---\n\n${anexos}` : principal;
+  return {
+    cliente: r.cliente,
+    responsavel: r.responsavel,
+    prioridade: r.prioridade,
+    prazo: r.prazo,
+    descricao,
+    tags: r.tags,
+    confianca: r.confianca,
+  };
 }
