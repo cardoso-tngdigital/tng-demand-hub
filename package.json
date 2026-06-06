@@ -24,10 +24,13 @@
     "@tiptap/extension-placeholder": "^3.26.0",
     "@tiptap/react": "^3.26.0",
     "@tiptap/starter-kit": "^3.26.0",
+    "browser-image-compression": "^2.0.2",
     "isomorphic-dompurify": "^3.16.0",
+    "mammoth": "^1.12.0",
     "marked": "^18.0.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "read-excel-file": "^9.0.10",
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {

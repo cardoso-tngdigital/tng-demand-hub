@@ -54,10 +54,20 @@ type StorageAttachmentPayload = {
   storage_path: string;
 };
 
+// Anexos textuais (docx/xlsx/txt/csv) cujo conteúdo já foi extraído no client.
+// Vão direto no prompt — Gemini não suporta esses MIMEs como inlineData.
+type AttachmentTextPayload = {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  content: string;
+};
+
 type ExtractRequest = {
   text: string;
   attachments?: AttachmentPayload[];
   storage_attachments?: StorageAttachmentPayload[];
+  attachment_texts?: AttachmentTextPayload[];
 };
 
 // Arquivo já carregado na Files API do Gemini, pronto pra usar no parts via
@@ -179,6 +189,20 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  const attachmentTexts = Array.isArray(body.attachment_texts)
+    ? body.attachment_texts
+    : [];
+  for (const t of attachmentTexts) {
+    if (
+      typeof t.id !== "string" ||
+      typeof t.file_name !== "string" ||
+      typeof t.mime_type !== "string" ||
+      typeof t.content !== "string"
+    ) {
+      return json({ error: "attachment_text com campos faltando" }, 400);
+    }
+  }
+
   // -----------------------------------------------------------------------
   // 3. Monta contexto da empresa
   // -----------------------------------------------------------------------
@@ -240,10 +264,13 @@ Deno.serve(async (req: Request) => {
   }
 
   // Lista combinada na ordem em que vão pro prompt: inline primeiro, depois
-  // storage. Mantém numeração consistente entre prompt e parts.
+  // storage, depois os textuais. Mantém numeração consistente entre prompt
+  // e parts (os textuais não geram parts inlineData/fileData — vão como
+  // bloco de texto no prompt).
   const allAttachmentsForPrompt: Array<{ fileName: string; mimeType: string }> = [
     ...attachments.map((a) => ({ fileName: a.fileName, mimeType: a.mimeType })),
     ...geminiFiles.map((g) => ({ fileName: g.fileName, mimeType: g.mimeType })),
+    ...attachmentTexts.map((t) => ({ fileName: t.file_name, mimeType: t.mime_type })),
   ];
 
   const prompt = buildPrompt({
@@ -253,6 +280,7 @@ Deno.serve(async (req: Request) => {
     isoDate,
     weekday,
     attachments: allAttachmentsForPrompt,
+    attachmentTexts,
   });
 
   // Parts na MESMA ordem do prompt: inline + fileData dos uploads grandes.
@@ -417,6 +445,7 @@ function buildPrompt(args: {
   isoDate: string;
   weekday: string;
   attachments: Array<{ fileName: string; mimeType: string }>;
+  attachmentTexts: AttachmentTextPayload[];
 }): string {
   const attachmentsBlock = args.attachments.length === 0
     ? "(nenhum anexo nesta captura)"
@@ -428,6 +457,23 @@ function buildPrompt(args: {
   const attachmentsRule = hasAttachments
     ? `OBRIGATÓRIO porque há ${args.attachments.length} anexo(s). Para CADA anexo, gere UM bloco no formato abaixo, separado por uma linha em branco. NÃO descreva os anexos dentro de \`descricao_principal\` — esse campo é só sobre a tarefa em si.`
     : `Deixe NULL. Não há anexos nesta captura.`;
+
+  // Bloco com conteúdo já extraído de docx/xlsx/txt/csv. Esses MIMEs não
+  // viram inlineData/fileData — a IA recebe o texto bruto aqui.
+  const textualBlock =
+    args.attachmentTexts.length === 0
+      ? ""
+      : `
+
+CONTEÚDO DE ANEXOS TEXTUAIS (texto extraído no client; o arquivo original
+está anexado à demanda mas seu texto vai apenas aqui):
+
+${args.attachmentTexts
+  .map(
+    (t, i) =>
+      `--- Anexo textual ${i + 1}: ${t.file_name} (${t.mime_type}) ---\n${t.content}\n`,
+  )
+  .join("\n")}`;
 
   return `Você é um assistente da TNG Digital especializado em extrair informações
 estruturadas de capturas rápidas feitas pela equipe interna.
@@ -451,6 +497,7 @@ ${args.text}
 
 ANEXOS ANEXADOS (mesma ordem das partes inlineData a seguir):
 ${attachmentsBlock}
+${textualBlock}
 
 INSTRUÇÕES:
 

@@ -685,12 +685,24 @@ então o contrato externo (`descricao` string única) não muda.
 Resultado: o Gemini não tem mais ambiguidade entre os papéis dos
 campos. Validação de schema rejeita resposta sem
 `descricao_principal`.
-13. Compressão de imagem no client (`browser-image-compression`)
-    antes do upload. Reduz storage e tempo de upload, especialmente
-    em fotos de celular. (Sprint 5)
-14. Extração local de DOCX/XLSX/TXT/CSV (`mammoth` + `sheetjs`).
-    Hoje esses tipos podem ser anexados mas o Gemini não enxerga.
-    (Sprint 5)
+~~13. Compressão de imagem no client.~~ ✅ Resolvido em 2026-06-06.
+`browser-image-compression` roda dentro de `buildPendingAttachment`
+para imagens > 1MB (1920px de borda, qualidade ~80%, preserva o
+MIME original pra não trocar PNG por JPEG sem aviso). Falha silenciosa
+devolve o original — preferir tamanho a perder o anexo.
+
+~~14. Extração local de DOCX/XLSX/TXT/CSV.~~ ✅ Resolvido em
+2026-06-06. Gemini não aceita esses MIMEs como inlineData; agora
+o client extrai o texto antes de mandar pra Edge Function via novo
+campo `attachment_texts`. Implementação:
+- DOCX: `mammoth.extractRawText`
+- XLSX: `read-excel-file/web-worker` (sheetjs tinha CVE sem fix)
+- TXT/CSV: `TextDecoder('utf-8')`
+- Limite de 40KB por arquivo (~10K tokens), trunca o resto
+
+Libs são carregadas via dynamic import — só baixam quando o user
+anexa o tipo correspondente. O arquivo original ainda sobe pro
+Storage como anexo normal pra reabertura futura.
 ~~15. Vídeos > ~8MB via Files API do Gemini.~~ ✅ Resolvido em
 2026-06-06. Anexos são divididos por tamanho:
 
@@ -723,12 +735,22 @@ membros é SQL pontual que ele faz no painel. Sem fricção real.
     `auth.admin.inviteUserByEmail`). Hoje admin precisa convidar
     no painel do Supabase. (Sprint 8)
 
-### Próximo: Sprint 11 — Beta Interno (após refinamento)
+## Sprint 10 — concluído
 
-- Distribuição para os 10 colaboradores.
-- Coleta diária de feedback estruturada.
-- Correção de bugs do uso real.
-- Documentação de uso interna.
+Concluído em 2026-06-06. Todos os follow-ups críticos do pré-beta
+fechados (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+item 16 descartado por baixa fricção real.
+
+### Sprint 11 — em stand-by (Beta Interno)
+
+Distribuição para a equipe TNG (~5 pessoas) decidida em 2026-06-06
+para ficar em stand-by até que o cardoso prossiga com outros temas.
+
+Quando reativar:
+- Distribuição via update assinado (workflow Release já está pronto)
+- Coleta de feedback estruturada
+- Correção de bugs do uso real
+- Documentação de uso interna
 
 ## Regras para você (Claude Code)
 

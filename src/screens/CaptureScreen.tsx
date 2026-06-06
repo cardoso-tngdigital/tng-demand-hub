@@ -256,7 +256,12 @@ export function CaptureScreen() {
     // anexo já está no Storage (move) ou ainda precisa ir (upload completo).
     setStorageMap(new Map(materialized.storage.map((s) => [s.id, s])));
 
-    const result = await extractDemand(trimmed, materialized.inline, materialized.storage);
+    const result = await extractDemand(
+      trimmed,
+      materialized.inline,
+      materialized.storage,
+      materialized.texts,
+    );
 
     setBusy(false);
 

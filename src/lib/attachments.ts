@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import imageCompression from "browser-image-compression";
 import { supabase } from "./supabase/client";
 import type { Attachment } from "../types/database";
 
@@ -213,23 +214,67 @@ export async function pickFilesNative(): Promise<{ files: File[]; errors: string
   return { files, errors };
 }
 
+// Imagens maiores que ~1MB são comprimidas localmente antes de virarem
+// PendingAttachment. Mantemos qualidade visualmente boa (1920px de borda,
+// ~80% de JPEG) — fica boa pra IA descrever e pra usuários reverem depois
+// no drawer. Imagens menores passam sem alteração. Vídeo e PDF não são
+// comprimidos aqui (FFmpeg/Ghostscript seriam muito pesados pro browser).
+const IMAGE_COMPRESS_THRESHOLD_BYTES = 1 * 1024 * 1024;
+
+async function maybeCompressImage(file: File): Promise<File> {
+  if (!file.type.startsWith("image/")) return file;
+  if (file.size < IMAGE_COMPRESS_THRESHOLD_BYTES) return file;
+  try {
+    const compressed = await imageCompression(file, {
+      maxSizeMB: 1.5,
+      maxWidthOrHeight: 1920,
+      useWebWorker: true,
+      // Preserva o tipo MIME original sempre que possível — evita transformar
+      // PNG em JPG e perder transparência sem aviso.
+      fileType: file.type,
+    });
+    console.log(
+      "[buildPendingAttachment] compressão:",
+      file.name,
+      `${(file.size / 1024 / 1024).toFixed(2)}MB → ${(compressed.size / 1024 / 1024).toFixed(2)}MB`,
+    );
+    return compressed;
+  } catch (err) {
+    // Se a compressão falhar, devolvemos o original — preferir tamanho a
+    // perder o anexo.
+    console.warn("[buildPendingAttachment] compressão falhou:", err);
+    return file;
+  }
+}
+
 export async function buildPendingAttachment(
   file: File,
 ): Promise<PendingAttachment | { error: string }> {
   console.log("[buildPendingAttachment]", file.name, file.type, file.size, "bytes");
-  const v = validateFile(file);
+
+  // Validação preliminar (MIME). Compressão pode reduzir tamanho, então
+  // checamos o size depois. Aqui só rejeitamos tipos não suportados / 0B.
+  const preCheck = validateFile(file);
+  if (!preCheck.ok && preCheck.error.startsWith("Tipo")) {
+    console.warn("[buildPendingAttachment] validação falhou:", preCheck.error);
+    return { error: preCheck.error };
+  }
+
+  const compressed = await maybeCompressImage(file);
+
+  const v = validateFile(compressed);
   if (!v.ok) {
-    console.warn("[buildPendingAttachment] validação falhou:", v.error);
+    console.warn("[buildPendingAttachment] validação pós-compressão falhou:", v.error);
     return { error: v.error };
   }
   const category = categorize(v.mime);
-  const previewUrl = category === "image" ? URL.createObjectURL(file) : null;
+  const previewUrl = category === "image" ? URL.createObjectURL(compressed) : null;
   try {
-    const bytes = await fileToBytes(file);
-    console.log("[buildPendingAttachment] OK", file.name, bytes.byteLength, "bytes prontos");
+    const bytes = await fileToBytes(compressed);
+    console.log("[buildPendingAttachment] OK", compressed.name, bytes.byteLength, "bytes prontos");
     return {
       id: crypto.randomUUID(),
-      file,
+      file: compressed,
       mime: v.mime,
       category,
       previewUrl,
@@ -429,17 +474,21 @@ async function uploadPendingToTmp(
 export type MaterializedAttachments = {
   inline: InlineAttachment[];
   storage: StorageAttachment[];
+  texts: AttachmentTextPayload[];
   sessionId: string;
   errors: string[];
 };
 
 /**
- * Decide, anexo a anexo, se vai como inlineData (rápido, < 4MB) ou pelo fluxo
- * Storage + Files API (mais lento, mas suporta vídeos de WhatsApp). Sobe os
- * grandes antes de retornar; os pequenos vão materializados como base64.
+ * Para cada anexo decide o caminho pra IA:
+ *   - DOCX/XLSX/TXT/CSV → extrai texto local (Gemini não lê esses como
+ *     inlineData) e devolve como `texts`. O conteúdo entra direto no prompt.
+ *   - Mídia < 4MB (image/audio/video/pdf) → `inline` (base64).
+ *   - Mídia ≥ 4MB → upload pro `tmp/` no Storage + Files API.
+ * Em todos os casos o anexo continua existindo como arquivo (ainda será
+ * vinculado à demanda no upload final).
  *
- * O `sessionId` agrupa os anexos da mesma captura em `tmp/{user}/{session}/`
- * pra facilitar cleanup futuro.
+ * O `sessionId` agrupa os arquivos da mesma captura em `tmp/{user}/{session}/`.
  */
 export async function materializeAttachmentsForExtraction(
   pendings: PendingAttachment[],
@@ -448,9 +497,16 @@ export async function materializeAttachmentsForExtraction(
   const sessionId = crypto.randomUUID();
   const inline: InlineAttachment[] = [];
   const storage: StorageAttachment[] = [];
+  const texts: AttachmentTextPayload[] = [];
   const errors: string[] = [];
 
   for (const p of pendings) {
+    if (hasExtractableText(p.mime)) {
+      const extracted = await extractTextFromPending(p);
+      if (extracted) texts.push(extracted);
+      else errors.push(`${p.file.name}: falha ao extrair texto`);
+      continue;
+    }
     if (p.file.size < INLINE_PER_FILE_BYTES) {
       inline.push(await pendingToInlinePayload(p));
     } else {
@@ -463,7 +519,7 @@ export async function materializeAttachmentsForExtraction(
     }
   }
 
-  return { inline, storage, sessionId, errors };
+  return { inline, storage, texts, sessionId, errors };
 }
 
 /**
@@ -507,6 +563,107 @@ export async function uploadAttachmentFromTmp(
   }
 
   return { ok: true, attachment: data as Attachment };
+}
+
+// ---------------------------------------------------------------------------
+// Extração local de texto (DOCX / XLSX / TXT / CSV)
+// ---------------------------------------------------------------------------
+// O Gemini não aceita docx/xlsx como inlineData. Pra esses tipos, extraímos
+// o conteúdo textual no client, enviamos como `attachment_texts` à Edge
+// Function e o prompt o injeta. O arquivo original ainda sobe pro Storage
+// como anexo normal pra reabertura futura no drawer. Libs (mammoth, xlsx)
+// só são carregadas sob demanda via dynamic import — economiza ~200KB no
+// bundle inicial.
+
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+export type AttachmentTextPayload = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  content: string;
+};
+
+/** True se o tipo MIME é texto puro / docx / xlsx / csv. */
+export function hasExtractableText(mime: string): boolean {
+  return (
+    mime === DOCX_MIME ||
+    mime === XLSX_MIME ||
+    mime === "text/plain" ||
+    mime === "text/csv"
+  );
+}
+
+async function extractTextFromDocx(bytes: Uint8Array): Promise<string> {
+  const { default: mammoth } = await import("mammoth");
+  const result = await mammoth.extractRawText({
+    arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  });
+  return result.value;
+}
+
+async function extractTextFromXlsx(bytes: Uint8Array, fileName: string): Promise<string> {
+  // Subpath /web-worker — entry "raiz" do read-excel-file não funciona no Vite
+  // (package.json sem export "."). O browser ainda lê normalmente sem
+  // precisar configurar worker; o nome do subpath é só convenção da lib.
+  const { default: readXlsxFile } = await import("read-excel-file/web-worker");
+  const blob = new Blob([new Uint8Array(bytes)], { type: XLSX_MIME });
+  const sheets = await readXlsxFile(blob, { getSheets: true });
+  const out: string[] = [];
+  for (const s of sheets) {
+    const rows = await readXlsxFile(blob, { sheet: s.name });
+    out.push(`## Planilha "${s.name}" — ${fileName}\n`);
+    for (const row of rows) {
+      out.push(row.map((c) => (c === null ? "" : String(c))).join(" | "));
+    }
+    out.push("");
+  }
+  return out.join("\n");
+}
+
+/**
+ * Pra anexos textuais (docx/xlsx/txt/csv), devolve o conteúdo extraído pra
+ * ser incluído no prompt. Retorna null pros outros tipos.
+ */
+export async function extractTextFromPending(
+  pending: PendingAttachment,
+): Promise<AttachmentTextPayload | null> {
+  try {
+    if (pending.mime === DOCX_MIME) {
+      const content = await extractTextFromDocx(pending.bytes);
+      return wrap(pending, content);
+    }
+    if (pending.mime === XLSX_MIME) {
+      const content = await extractTextFromXlsx(pending.bytes, pending.file.name);
+      return wrap(pending, content);
+    }
+    if (pending.mime === "text/plain" || pending.mime === "text/csv") {
+      const content = new TextDecoder("utf-8").decode(pending.bytes);
+      return wrap(pending, content);
+    }
+    return null;
+  } catch (err) {
+    console.error(
+      `[extractTextFromPending] ${pending.file.name}:`,
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+function wrap(pending: PendingAttachment, content: string): AttachmentTextPayload {
+  // Limita conteúdo bruto a ~40KB pra não explodir o tamanho do prompt
+  // (alguns XLSX e CSV ficam enormes). 40KB ≈ 10K tokens.
+  const trimmed = content.length > 40_000 ? content.slice(0, 40_000) + "\n…[conteúdo truncado]" : content;
+  return {
+    id: pending.id,
+    fileName: pending.file.name,
+    mimeType: pending.mime,
+    content: trimmed,
+  };
 }
 
 export function categoryIcon(c: AttachmentCategory): string {

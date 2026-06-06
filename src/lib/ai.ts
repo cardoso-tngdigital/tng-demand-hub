@@ -1,6 +1,10 @@
 import { supabase } from "./supabase/client";
 import type { DemandPriority } from "../types/database";
-import type { InlineAttachment, StorageAttachment } from "./attachments";
+import type {
+  AttachmentTextPayload,
+  InlineAttachment,
+  StorageAttachment,
+} from "./attachments";
 
 export type Confianca = {
   cliente: number;
@@ -40,6 +44,7 @@ export async function extractDemand(
   text: string,
   attachments: InlineAttachment[] = [],
   storageAttachments: StorageAttachment[] = [],
+  attachmentTexts: AttachmentTextPayload[] = [],
 ): Promise<ExtractionResult> {
   try {
     const { data, error } = await supabase.functions.invoke<{
@@ -58,6 +63,12 @@ export async function extractDemand(
           file_name: s.fileName,
           mime_type: s.mimeType,
           storage_path: s.storagePath,
+        })),
+        attachment_texts: attachmentTexts.map((t) => ({
+          id: t.id,
+          file_name: t.fileName,
+          mime_type: t.mimeType,
+          content: t.content,
         })),
       },
     });
