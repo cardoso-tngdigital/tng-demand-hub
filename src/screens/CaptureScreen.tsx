@@ -26,7 +26,12 @@ import {
   type ClientOption,
   type ProfileOption,
 } from "../lib/lookups";
-import type { DemandPriority } from "../types/database";
+import {
+  applyRules,
+  listActiveRules,
+  type AppliedRuleEntry,
+} from "../lib/classificationRules";
+import type { ClassificationRule, DemandPriority } from "../types/database";
 
 /**
  * Resolve um nome retornado pela IA contra a lista cadastrada — primeiro
@@ -76,6 +81,17 @@ export type ConfirmedDemand = {
   assigneeId: string | null;
 };
 
+/** Valores iniciais já com matching nome→id e regras aplicadas. */
+type Initial = {
+  descricao: string;
+  prazo: string | null;
+  prioridade: DemandPriority;
+  tags: string[];
+  clientId: string | null;
+  assigneeId: string | null;
+  appliedRules: AppliedRuleEntry[];
+};
+
 type Mode = "input" | "confirm";
 
 export function CaptureScreen() {
@@ -83,18 +99,26 @@ export function CaptureScreen() {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [extracted, setExtracted] = useState<ExtractedDemand | null>(null);
+  const [initial, setInitial] = useState<Initial | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
+  const [rules, setRules] = useState<ClassificationRule[]>([]);
 
-  // Carrega lookups uma vez. Usados no matching de cliente/responsável extraído
-  // pela IA e nos selects da tela de confirmação.
+  // Carrega lookups e regras uma vez. Usados no matching de cliente/responsável
+  // extraído pela IA, aplicação de regras de auto-classificação e nos selects
+  // da tela de confirmação.
   useEffect(() => {
     (async () => {
-      const [c, p] = await Promise.all([listActiveClients(), listActiveProfiles()]);
+      const [c, p, r] = await Promise.all([
+        listActiveClients(),
+        listActiveProfiles(),
+        listActiveRules(),
+      ]);
       setClients(c);
       setProfiles(p);
+      setRules(r);
     })();
   }, []);
 
@@ -138,6 +162,7 @@ export function CaptureScreen() {
     setText("");
     setAttachments([]);
     setExtracted(null);
+    setInitial(null);
     setError(null);
     setMode("input");
     setBusy(false);
@@ -189,7 +214,35 @@ export function CaptureScreen() {
       return;
     }
 
-    setExtracted(result.extracted);
+    // Matching nome→id e aplicação das regras de auto-classificação
+    const e = result.extracted;
+    const matchedClientId = matchClient(e.cliente, clients);
+    const matchedAssigneeId = matchProfile(e.responsavel, profiles);
+
+    const { result: applied, applied: appliedRules } = applyRules(
+      {
+        descricao: e.descricao,
+        cliente: e.cliente,
+        clientId: matchedClientId,
+        responsavel: e.responsavel,
+        assigneeId: matchedAssigneeId,
+        prioridade: e.prioridade,
+        tags: [...e.tags],
+      },
+      rules,
+      clients,
+    );
+
+    setExtracted(e);
+    setInitial({
+      descricao: applied.descricao,
+      prazo: e.prazo,
+      prioridade: applied.prioridade,
+      tags: applied.tags,
+      clientId: applied.clientId,
+      assigneeId: applied.assigneeId,
+      appliedRules,
+    });
     setMode("confirm");
   }
 
@@ -259,10 +312,11 @@ export function CaptureScreen() {
     await closeWindow();
   }
 
-  if (mode === "confirm" && extracted) {
+  if (mode === "confirm" && extracted && initial) {
     return (
       <ConfirmView
         extracted={extracted}
+        initial={initial}
         clients={clients}
         profiles={profiles}
         attachments={attachments}
@@ -273,6 +327,7 @@ export function CaptureScreen() {
         onBack={() => {
           setMode("input");
           setExtracted(null);
+          setInitial(null);
         }}
         onConfirm={(final) => void saveExtracted(final)}
       />
@@ -533,6 +588,7 @@ const PRIORITY_OPTIONS: { value: DemandPriority; label: string }[] = [
 
 function ConfirmView(props: {
   extracted: ExtractedDemand;
+  initial: Initial;
   clients: ClientOption[];
   profiles: ProfileOption[];
   attachments: PendingAttachment[];
@@ -543,16 +599,12 @@ function ConfirmView(props: {
   onCancel: () => void;
   onConfirm: (final: ConfirmedDemand) => void;
 }) {
-  const [clientId, setClientId] = useState<string>(
-    matchClient(props.extracted.cliente, props.clients) ?? "",
-  );
-  const [assigneeId, setAssigneeId] = useState<string>(
-    matchProfile(props.extracted.responsavel, props.profiles) ?? "",
-  );
-  const [prioridade, setPrioridade] = useState<DemandPriority>(props.extracted.prioridade);
-  const [prazo, setPrazo] = useState(props.extracted.prazo ?? "");
-  const [descricao, setDescricao] = useState(props.extracted.descricao);
-  const [tags, setTags] = useState(props.extracted.tags.join(", "));
+  const [clientId, setClientId] = useState<string>(props.initial.clientId ?? "");
+  const [assigneeId, setAssigneeId] = useState<string>(props.initial.assigneeId ?? "");
+  const [prioridade, setPrioridade] = useState<DemandPriority>(props.initial.prioridade);
+  const [prazo, setPrazo] = useState(props.initial.prazo ?? "");
+  const [descricao, setDescricao] = useState(props.initial.descricao);
+  const [tags, setTags] = useState(props.initial.tags.join(", "));
 
   const conf = props.extracted.confianca;
   const lowConfidence = (v: number) => v < 0.7;
@@ -612,6 +664,13 @@ function ConfirmView(props: {
             ← voltar
           </button>
         </div>
+
+        {props.initial.appliedRules.length > 0 && (
+          <div className="border-b border-tng-orange-400/30 bg-tng-orange-400/10 px-5 py-2 text-[10px] text-tng-orange-200">
+            <span className="font-medium">Regra(s) aplicada(s):</span>{" "}
+            {props.initial.appliedRules.map((a) => a.ruleName).join(", ")}
+          </div>
+        )}
 
         <div className="grid flex-1 grid-cols-2 gap-3 overflow-y-auto px-5 py-4">
           <Field

@@ -88,3 +88,21 @@ export interface Comment {
   created_at: string;
   updated_at: string;
 }
+
+export type RuleMatchField = "description" | "client" | "tag";
+export type RuleMatchOperator = "contains" | "equals";
+export type RuleSetField = "assignee_id" | "priority" | "tag";
+
+export interface ClassificationRule {
+  id: string;
+  name: string;
+  match_field: RuleMatchField;
+  match_operator: RuleMatchOperator;
+  match_value: string;
+  set_field: RuleSetField;
+  set_value: string;
+  active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}

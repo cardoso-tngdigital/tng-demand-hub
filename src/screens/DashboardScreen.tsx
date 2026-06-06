@@ -11,6 +11,8 @@ import { SearchPalette } from "../components/SearchPalette";
 import { ClientsAdmin } from "../components/ClientsAdmin";
 import { MembersAdmin } from "../components/MembersAdmin";
 import { AiUsageAdmin } from "../components/AiUsageAdmin";
+import { RulesAdmin } from "../components/RulesAdmin";
+import { listAllProfiles } from "../lib/profiles";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
 
@@ -100,6 +102,18 @@ export function DashboardScreen() {
   const [clientsAdminOpen, setClientsAdminOpen] = useState(false);
   const [membersAdminOpen, setMembersAdminOpen] = useState(false);
   const [aiUsageOpen, setAiUsageOpen] = useState(false);
+  const [rulesAdminOpen, setRulesAdminOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Detecta papel admin do usuário atual para liberar gestão de regras.
+  useEffect(() => {
+    if (!currentUserId) return;
+    (async () => {
+      const all = await listAllProfiles();
+      const me = all.data.find((p) => p.id === currentUserId);
+      setIsAdmin(me?.role === "admin");
+    })();
+  }, [currentUserId, membersAdminOpen]);
 
   // Recarrega a lista de clientes quando o admin é fechado (pra refletir
   // mudanças nos filtros e selects do drawer/captura).
@@ -343,6 +357,14 @@ export function DashboardScreen() {
           >
             Uso IA
           </button>
+          <button
+            type="button"
+            onClick={() => setRulesAdminOpen(true)}
+            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
+            title="Regras de auto-classificação"
+          >
+            Regras
+          </button>
           <span className="text-xs text-tng-marine-300">{user?.email}</span>
           <button
             onClick={signOut}
@@ -446,6 +468,14 @@ export function DashboardScreen() {
         open={aiUsageOpen}
         profiles={profiles}
         onClose={() => setAiUsageOpen(false)}
+      />
+
+      <RulesAdmin
+        open={rulesAdminOpen}
+        isAdmin={isAdmin}
+        clients={clients}
+        profiles={profiles}
+        onClose={() => setRulesAdminOpen(false)}
       />
     </div>
   );

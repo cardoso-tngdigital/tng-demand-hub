@@ -439,9 +439,76 @@ service_role key (cardoso.webdesign foi promovido em 2026-06-05).
 - [x] Erros (status != success) destacados com borda vermelha;
       tooltip mostra a mensagem completa
 
-### Próxima fase
+### Fase 4 — concluída
 
-- Fase 4 — Auto-classificação (classification_rules)
+- [x] Migration `classification_rules` aplicada (admin escreve, todos
+      os membros leem)
+- [x] `src/lib/classificationRules.ts` com CRUD + `applyRules` que
+      muta uma cópia de AppliedDemand percorrendo regras ativas
+- [x] `RulesAdmin` modal acessível pelo botão "Regras" no header;
+      gating por admin (RLS reforça server-side); non-admins veem
+      banner laranja e botões ocultos
+- [x] CaptureScreen carrega regras junto com clients/profiles; após
+      extractDemand, faz matching nome→id e roda applyRules antes da
+      ConfirmView. Banner laranja no topo da revisão lista nomes das
+      regras aplicadas.
+
+**Notas operacionais:**
+
+- Cota diária do `gemini-2.5-flash` estourou em 2026-06-05 ~23h. A
+  Edge Function passou a usar `gemini-2.5-flash-lite` (cota separada
+  no free tier do AI Studio). O bind 2.0-flash → 2.5-flash já estava
+  documentado no Sprint 4.
+
+## Sprint 8 — concluído
+
+Concluído em 2026-06-05 com 4 fases entregues. Admin completo,
+fundamentos de governança da equipe e auto-classificação operacional.
+
+### Follow-ups acumulados e não-bloqueantes
+
+**UX — janela flutuante de captura:**
+
+- Botão de fechar visível no header — quando a IA retorna erro
+  (ex.: 429), as teclas `Esc` e `Cmd+Enter` deixam de funcionar
+  porque o foco sai do textarea / handler é registrado num input
+  que perdeu foco. Adicionar um `✕` no topo da janela (sempre
+  presente) e migrar os atalhos para um `window.addEventListener`
+  global do ciclo de vida do componente.
+- Tela de revisão (ConfirmView): mesmo problema, atalhos `Esc` e
+  `⌘↵` no `onKeyDown` do `<div>` raiz só disparam quando o foco
+  está no próprio div. Migrar para listener global enquanto a tela
+  estiver montada.
+
+**Tela de Uso da IA:**
+
+- Exibir mensagem de erro completa em um painel lateral (drawer)
+  ao clicar na linha — hoje só aparece no `title` (tooltip), não dá
+  pra copiar.
+
+**Fallback de modelo na Edge Function (RF-10 estendido):**
+
+- Configurar uma lista ordenada de modelos no env (ex.:
+  `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`).
+  Em caso de 429/503 no primário, tentar o próximo automaticamente
+  antes de devolver erro pro client. A captura pode ficar
+  ligeiramente mais lenta nesses casos, mas o usuário não vê falha.
+- Fallback **cross-provider** (OpenAI, Anthropic) é tecnicamente
+  viável (mesma estratégia, payload diferente), mas hoje só o
+  Gemini tem free tier de API. GPT e Claude exigem billing — para
+  manter "100% gratuito no MVP" o fallback deve ficar restrito aos
+  modelos Gemini por enquanto. Documentar adapter por provider
+  para destravar a inclusão depois.
+
+## Próximo: Sprint 9 — Polimento e Distribuição
+
+Ver PRD seção 11.2. Entregas previstas:
+
+- Auto-update via Tauri Updater.
+- Onboarding interativo de 4 telas.
+- Tema claro/escuro funcional.
+- Build assinado (ou instruções para abrir sem assinatura).
+- DMG (macOS) e MSI (Windows) gerados.
 
 ## Regras para você (Claude Code)
 
