@@ -576,18 +576,89 @@ DMG/MSI manualmente a cada update.
 
 Primeira release publicada: **v0.1.1**.
 
-## Próximo: Sprint 10 — Beta Interno e Ajustes Finais
+## Sprint 10 — em andamento (Refinamento pré-beta)
 
-Ver PRD seção 11.2. Entregas previstas:
+O PRD original previa distribuição para a equipe no Sprint 10, mas
+decidimos em 2026-06-06 segurar isso e usar o sprint para atacar os
+follow-ups acumulados e polir o app antes de colocar nas mãos dos
+colaboradores. A distribuição vira o Sprint 11 (ou final do 10,
+depende do volume).
 
-- Distribuição para os 10 colaboradores (DMG + MSI já gerados pelo
-  workflow).
+### Follow-ups acumulados (priorizados por impacto no uso diário)
+
+**Críticos — afetam fluxo principal**
+
+1. Atalhos `Esc` e `⌘↵` não funcionam na janela flutuante quando há
+   erro / na tela de revisão. Migrar handlers para
+   `window.addEventListener` global montados pelo componente.
+   (Sprint 5+8)
+2. Botão `✕` sempre visível no header da janela flutuante de
+   captura, independente de estado. (Sprint 8)
+3. Cliente criado por um user não aparece no select da captura
+   aberta por outro user na mesma sessão — `CaptureScreen` carrega
+   lookups só no mount, mas a janela `capture` do Tauri fica viva
+   escondida. Solução: subscribe realtime de `clients`/`profiles`
+   ou refetch ao mostrar a janela (`tauri://focus`). (Sprint 8)
+4. Fallback automático de modelo na Edge Function: lista ordenada
+   (ex.: `gemini-2.5-flash`, `gemini-2.5-flash-lite`,
+   `gemini-2.0-flash`). Em 429/503 no primário, tentar próximo
+   antes de devolver erro ao client. Hoje qualquer 429 quebra a
+   captura. (Sprint 8)
+5. PDF anexado falha com "I/O read operation failed" no
+   `FileReader.readAsDataURL`. Investigar com chunked reader ou
+   migrar PDFs para a Files API do Gemini. (Sprint 5)
+
+**Polimento de UX**
+
+6. Comentários: ordenar por mais recentes em cima (hoje vão
+   ascendente). Trocar `order` em `listComments` e ajustar insert
+   otimista para `prepend`. (Sprint 7)
+7. Indicador visual nos cards de demanda que possuem comentários
+   (📝 ou contador). Exige `comments_count` denormalizado ou view.
+   (Sprint 7)
+8. Renderização markdown da descrição no drawer — hoje aparece
+   como texto bruto preservando quebras. Plugar `react-markdown`
+   ou equivalente. (Sprint 6)
+9. Clicar na notificação nativa abre o drawer da demanda
+   correspondente. Tauri 2 expõe action listeners; precisa anexar
+   `demand_id` como payload e tratar no `lib.rs` / JS. (Sprint 7)
+10. Limpar badge do tray icon explicitamente no `signOut` (hoje
+    só zera ao desmontar o Dashboard, e em alguns caminhos o
+    componente persiste por um instante). (Sprint 7)
+11. Tela de Uso da IA: exibir mensagem de erro completa em painel
+    lateral ao clicar na linha — hoje só aparece no `title`
+    (tooltip), não dá pra copiar. (Sprint 8)
+
+**Otimização e qualidade da IA**
+
+12. Consistência do bloco RF-06b — o Gemini às vezes funde a
+    transcrição na descrição principal em vez de gerar bloco
+    markdown separado. Refinar prompt ou migrar para
+    `responseSchema` formal. (Sprint 5)
+13. Compressão de imagem no client (`browser-image-compression`)
+    antes do upload. Reduz storage e tempo de upload, especialmente
+    em fotos de celular. (Sprint 5)
+14. Extração local de DOCX/XLSX/TXT/CSV (`mammoth` + `sheetjs`).
+    Hoje esses tipos podem ser anexados mas o Gemini não enxerga.
+    (Sprint 5)
+15. Vídeos > ~8MB via Files API do Gemini (hoje estouram o limite
+    inline). (Sprint 5)
+
+**Convite e governança**
+
+16. Cadastro do primeiro admin sem flow de UI — hoje depende de
+    SQL manual (`update profiles set role='admin' where id=...`).
+    Se virar fricção, Edge Function `bootstrap_admin` ou marcar o
+    primeiro signup como admin automaticamente. (Sprint 8)
+17. Convite por e-mail integrado no app (Edge Function chamando
+    `auth.admin.inviteUserByEmail`). Hoje admin precisa convidar
+    no painel do Supabase. (Sprint 8)
+
+### Próximo: Sprint 11 — Beta Interno (após refinamento)
+
+- Distribuição para os 10 colaboradores.
 - Coleta diária de feedback estruturada.
-- Ajustes de prompt do Gemini com base em capturas reais (RF-06b
-  está com bug conhecido: o modelo às vezes funde a transcrição na
-  descrição principal em vez de gerar bloco markdown separado).
-- Correção de bugs prioritários (lista dos follow-ups acumulados
-  abaixo).
+- Correção de bugs do uso real.
 - Documentação de uso interna.
 
 ## Regras para você (Claude Code)
