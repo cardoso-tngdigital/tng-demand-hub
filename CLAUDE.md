@@ -375,14 +375,31 @@ nativas validadas em build de produção; em dev o macOS ignora
 silenciosamente (limitação do LaunchServices). Badge funciona tanto
 em dev quanto em release.
 
-## Próximo: Sprint 8 — Painel Admin e Gestão de Equipe
+## Sprint 8 — em andamento (Admin)
 
-Ver PRD seção 11.2. Entregas previstas:
+### Fase 1 — CRUD de clientes + bind IA→cadastro (concluída)
 
-- Convite por e-mail de novo usuário (RF-03).
-- CRUD de clientes (RF-21).
-- Tela de uso da IA / consumo do mês (sobre ai_usage_log já existente).
-- Tabela `classification_rules` + tela de regras simples (RF-11).
+- [x] `src/lib/clients.ts` com listAllClients, createClient, updateClient,
+      deleteClient
+- [x] `ClientsAdmin` modal fullscreen aberto via botão "Clientes" no
+      header: form de novo cliente, edição inline por linha, toggle
+      ativar/desativar, excluir (RLS rejeita se não-admin)
+- [x] Dashboard recarrega `clients` ativos quando o admin fecha,
+      atualizando filtros e selects da captura
+- [x] **Fix**: CaptureScreen agora carrega `clients` e `profiles`
+      ativos, faz matching nome→id (exact por name/alias, depois
+      partial) e passa `client_id` e `assignee_id` ao `createDemand`.
+      Antes a IA detectava certo mas saveExtracted não passava esses
+      campos, então iam null para o banco.
+- [x] `ConfirmView` da captura: campos Cliente e Responsável agora
+      são `<select>` com cadastros + opção "Sem". Dica em laranja
+      avisa quando a IA sugeriu nome que não existe no cadastro.
+
+### Próximas fases
+
+- Fase 2 — Gestão de membros (ativar/desativar, role admin/member)
+- Fase 3 — Painel de uso da IA (consumo mensal sobre ai_usage_log)
+- Fase 4 — Auto-classificação (classification_rules)
 
 ## Regras para você (Claude Code)
 

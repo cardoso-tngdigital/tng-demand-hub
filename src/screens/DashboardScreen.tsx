@@ -8,6 +8,7 @@ import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileO
 import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
 import { KanbanBoard } from "../components/KanbanBoard";
 import { SearchPalette } from "../components/SearchPalette";
+import { ClientsAdmin } from "../components/ClientsAdmin";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
 
@@ -94,6 +95,17 @@ export function DashboardScreen() {
   const [assigneeFilter, setAssigneeFilter] = useState<RefFilter>("all");
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [clientsAdminOpen, setClientsAdminOpen] = useState(false);
+
+  // Recarrega a lista de clientes quando o admin é fechado (pra refletir
+  // mudanças nos filtros e selects do drawer/captura).
+  useEffect(() => {
+    if (clientsAdminOpen) return;
+    (async () => {
+      const c = await listActiveClients();
+      setClients(c);
+    })();
+  }, [clientsAdminOpen]);
 
   // Atalho global Cmd/Ctrl+K abre a busca
   useEffect(() => {
@@ -294,6 +306,14 @@ export function DashboardScreen() {
         </div>
         <div className="flex items-center gap-3">
           <ViewToggle mode={viewMode} onChange={setViewMode} />
+          <button
+            type="button"
+            onClick={() => setClientsAdminOpen(true)}
+            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
+            title="Gerenciar clientes"
+          >
+            Clientes
+          </button>
           <span className="text-xs text-tng-marine-300">{user?.email}</span>
           <button
             onClick={signOut}
@@ -380,6 +400,11 @@ export function DashboardScreen() {
         demands={demands}
         onClose={() => setSearchOpen(false)}
         onSelect={(id) => setSelectedDemandId(id)}
+      />
+
+      <ClientsAdmin
+        open={clientsAdminOpen}
+        onClose={() => setClientsAdminOpen(false)}
       />
     </div>
   );

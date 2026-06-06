@@ -20,7 +20,61 @@ import {
   uploadAttachment,
   type PendingAttachment,
 } from "../lib/attachments";
+import {
+  listActiveClients,
+  listActiveProfiles,
+  type ClientOption,
+  type ProfileOption,
+} from "../lib/lookups";
 import type { DemandPriority } from "../types/database";
+
+/**
+ * Resolve um nome retornado pela IA contra a lista cadastrada — primeiro
+ * tenta match exato (case insensitive) por nome ou alias, depois match
+ * parcial. Retorna o id do cadastro encontrado ou null.
+ */
+function matchByName<T extends { id: string; name: string; alias?: string | null }>(
+  raw: string | null,
+  items: T[],
+): string | null {
+  if (!raw) return null;
+  const norm = raw.toLowerCase().trim();
+  if (!norm) return null;
+  for (const i of items) {
+    if (i.name.toLowerCase() === norm) return i.id;
+    if (i.alias && i.alias.toLowerCase() === norm) return i.id;
+  }
+  for (const i of items) {
+    const n = i.name.toLowerCase();
+    if (n.includes(norm) || norm.includes(n)) return i.id;
+    if (i.alias) {
+      const a = i.alias.toLowerCase();
+      if (a.includes(norm) || norm.includes(a)) return i.id;
+    }
+  }
+  return null;
+}
+
+function matchClient(name: string | null, clients: ClientOption[]): string | null {
+  return matchByName(name, clients);
+}
+
+function matchProfile(name: string | null, profiles: ProfileOption[]): string | null {
+  if (!name) return null;
+  return matchByName(
+    name,
+    profiles.map((p) => ({ id: p.id, name: p.full_name, alias: null })),
+  );
+}
+
+export type ConfirmedDemand = {
+  descricao: string;
+  prioridade: DemandPriority;
+  prazo: string | null;
+  tags: string[];
+  clientId: string | null;
+  assigneeId: string | null;
+};
 
 type Mode = "input" | "confirm";
 
@@ -31,6 +85,18 @@ export function CaptureScreen() {
   const [extracted, setExtracted] = useState<ExtractedDemand | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [profiles, setProfiles] = useState<ProfileOption[]>([]);
+
+  // Carrega lookups uma vez. Usados no matching de cliente/responsável extraído
+  // pela IA e nos selects da tela de confirmação.
+  useEffect(() => {
+    (async () => {
+      const [c, p] = await Promise.all([listActiveClients(), listActiveProfiles()]);
+      setClients(c);
+      setProfiles(p);
+    })();
+  }, []);
 
   // Garante que object URLs criados para preview sejam liberados na desmontagem.
   useEffect(() => {
@@ -163,7 +229,7 @@ export function CaptureScreen() {
     await closeWindow();
   }
 
-  async function saveExtracted(final: ExtractedDemand) {
+  async function saveExtracted(final: ConfirmedDemand) {
     setBusy(true);
     setError(null);
 
@@ -173,6 +239,8 @@ export function CaptureScreen() {
       priority: final.prioridade,
       due_date: final.prazo,
       tags: final.tags,
+      client_id: final.clientId,
+      assignee_id: final.assigneeId,
       captured_via: "hotkey",
     });
 
@@ -195,6 +263,8 @@ export function CaptureScreen() {
     return (
       <ConfirmView
         extracted={extracted}
+        clients={clients}
+        profiles={profiles}
         attachments={attachments}
         onRemoveAttachment={removeAttachment}
         busy={busy}
@@ -463,16 +533,22 @@ const PRIORITY_OPTIONS: { value: DemandPriority; label: string }[] = [
 
 function ConfirmView(props: {
   extracted: ExtractedDemand;
+  clients: ClientOption[];
+  profiles: ProfileOption[];
   attachments: PendingAttachment[];
   onRemoveAttachment: (id: string) => void;
   busy: boolean;
   error: string | null;
   onBack: () => void;
   onCancel: () => void;
-  onConfirm: (final: ExtractedDemand) => void;
+  onConfirm: (final: ConfirmedDemand) => void;
 }) {
-  const [cliente, setCliente] = useState(props.extracted.cliente ?? "");
-  const [responsavel, setResponsavel] = useState(props.extracted.responsavel ?? "");
+  const [clientId, setClientId] = useState<string>(
+    matchClient(props.extracted.cliente, props.clients) ?? "",
+  );
+  const [assigneeId, setAssigneeId] = useState<string>(
+    matchProfile(props.extracted.responsavel, props.profiles) ?? "",
+  );
   const [prioridade, setPrioridade] = useState<DemandPriority>(props.extracted.prioridade);
   const [prazo, setPrazo] = useState(props.extracted.prazo ?? "");
   const [descricao, setDescricao] = useState(props.extracted.descricao);
@@ -481,10 +557,17 @@ function ConfirmView(props: {
   const conf = props.extracted.confianca;
   const lowConfidence = (v: number) => v < 0.7;
 
+  const clienteHint =
+    props.extracted.cliente && !clientId
+      ? `IA sugeriu "${props.extracted.cliente}", mas não há cliente cadastrado com esse nome.`
+      : null;
+  const responsavelHint =
+    props.extracted.responsavel && !assigneeId
+      ? `IA sugeriu "${props.extracted.responsavel}", mas não há membro com esse nome.`
+      : null;
+
   function handleConfirm() {
     props.onConfirm({
-      cliente: cliente.trim() || null,
-      responsavel: responsavel.trim() || null,
       prioridade,
       prazo: prazo.trim() || null,
       descricao: descricao.trim(),
@@ -492,7 +575,8 @@ function ConfirmView(props: {
         .split(",")
         .map((t) => t.trim())
         .filter(Boolean),
-      confianca: conf,
+      clientId: clientId || null,
+      assigneeId: assigneeId || null,
     });
   }
 
@@ -533,27 +617,41 @@ function ConfirmView(props: {
           <Field
             label="Cliente"
             confidence={conf.cliente}
-            warn={lowConfidence(conf.cliente)}
+            warn={lowConfidence(conf.cliente) || !!clienteHint}
+            hint={clienteHint}
           >
-            <input
-              value={cliente}
-              onChange={(e) => setCliente(e.target.value)}
-              placeholder="—"
-              className={fieldClass(lowConfidence(conf.cliente))}
-            />
+            <select
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              className={fieldClass(lowConfidence(conf.cliente) || !!clienteHint)}
+            >
+              <option value="" className="bg-tng-marine-800">— Sem cliente</option>
+              {props.clients.map((c) => (
+                <option key={c.id} value={c.id} className="bg-tng-marine-800">
+                  {c.alias || c.name}
+                </option>
+              ))}
+            </select>
           </Field>
 
           <Field
             label="Responsável"
             confidence={conf.responsavel}
-            warn={lowConfidence(conf.responsavel)}
+            warn={lowConfidence(conf.responsavel) || !!responsavelHint}
+            hint={responsavelHint}
           >
-            <input
-              value={responsavel}
-              onChange={(e) => setResponsavel(e.target.value)}
-              placeholder="—"
-              className={fieldClass(lowConfidence(conf.responsavel))}
-            />
+            <select
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              className={fieldClass(lowConfidence(conf.responsavel) || !!responsavelHint)}
+            >
+              <option value="" className="bg-tng-marine-800">— Sem responsável</option>
+              {props.profiles.map((p) => (
+                <option key={p.id} value={p.id} className="bg-tng-marine-800">
+                  {p.full_name}
+                </option>
+              ))}
+            </select>
           </Field>
 
           <Field
@@ -655,11 +753,13 @@ function Field({
   children,
   confidence,
   warn,
+  hint,
 }: {
   label: string;
   children: React.ReactNode;
   confidence?: number;
   warn?: boolean;
+  hint?: string | null;
 }) {
   return (
     <div className="space-y-1">
@@ -677,6 +777,7 @@ function Field({
         )}
       </div>
       {children}
+      {hint && <p className="text-[9px] text-tng-orange-300">{hint}</p>}
     </div>
   );
 }
