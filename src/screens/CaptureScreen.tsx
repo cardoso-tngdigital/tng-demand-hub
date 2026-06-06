@@ -585,6 +585,7 @@ function InputView(props: {
                 >
                   escolha
                 </button>
+                <span className="ml-2 text-tng-marine-400">· Máx. 50MB por arquivo</span>
                 {props.attachments.length > 0 && (
                   <span className="ml-2 text-tng-marine-400">
                     · {props.attachments.length} anexo

@@ -3,10 +3,12 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { supabase } from "./supabase/client";
 import type { Attachment } from "../types/database";
 
-// 200 MB. Antes era 50, mas com a Files API do Gemini agora aceitamos vídeos
-// reais (WhatsApp Forward, capturas de tela longa, etc.). Acima desse limite
-// o uso prático é raro o suficiente pra exigir conversa.
-export const MAX_FILE_SIZE = 200 * 1024 * 1024;
+// 50 MB — match exato do limite por arquivo do Supabase Storage no plano
+// free. O bucket aceita 500MB, mas o teto global do projeto continua
+// segurando em 50MB enquanto não migrarmos para o Pro. Vídeos do
+// WhatsApp típicos (5-25MB) passam com folga; arquivos locais maiores
+// precisam ser comprimidos pelo user antes de anexar.
+export const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 // Tamanho cumulativo (bytes do arquivo original, antes do base64) dos anexos
 // enviados como inlineData à Edge Function. Mantemos margem segura abaixo do
@@ -36,8 +38,11 @@ const ALLOWED_MIME_TYPES = new Set<string>([
   "audio/ogg",
   // Vídeos
   "video/mp4",
+  "video/x-m4v",
   "video/quicktime",
   "video/webm",
+  "video/3gpp",
+  "video/x-msvideo",
   // Documentos
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -52,7 +57,10 @@ const EXTENSION_FALLBACK: Record<string, string> = {
   wav: "audio/wav",
   mov: "video/quicktime",
   mp4: "video/mp4",
+  m4v: "video/mp4",
   webm: "video/webm",
+  "3gp": "video/3gpp",
+  avi: "video/x-msvideo",
   pdf: "application/pdf",
   png: "image/png",
   jpg: "image/jpeg",
