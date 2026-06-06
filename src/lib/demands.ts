@@ -118,12 +118,19 @@ export async function listDemands(
   return { data: (data as Demand[]) ?? [], error: null };
 }
 
+export type DemandChange = {
+  new: Demand | null;
+  old: Demand | null;
+};
+
 /**
  * Subscreve mudanças na tabela demands em tempo real.
+ * Devolve `{ new, old }` em todos os eventos para que o caller possa
+ * comparar valores anteriores (necessário para detectar reatribuições).
  * Retorna função para desinscrever.
  */
 export function subscribeToDemands(
-  onChange: (event: "INSERT" | "UPDATE" | "DELETE", demand: Demand) => void,
+  onChange: (event: "INSERT" | "UPDATE" | "DELETE", change: DemandChange) => void,
 ): () => void {
   const channel = supabase
     .channel("public:demands")
@@ -132,8 +139,9 @@ export function subscribeToDemands(
       { event: "*", schema: "public", table: "demands" },
       (payload) => {
         const eventType = payload.eventType as "INSERT" | "UPDATE" | "DELETE";
-        const row = (payload.new ?? payload.old) as Demand;
-        if (row) onChange(eventType, row);
+        const newRow = (payload.new as Demand | undefined) ?? null;
+        const oldRow = (payload.old as Demand | undefined) ?? null;
+        if (newRow || oldRow) onChange(eventType, { new: newRow, old: oldRow });
       },
     )
     .subscribe();

@@ -320,11 +320,38 @@ no dia a dia: vê detalhes, edita, filtra, alterna pra Kanban e busca.
   comentários — exige contar comments por demand_id, idealmente via
   view ou coluna `comments_count` denormalizada.
 
-### Próximas fases
+### Fase 2 — Notificações nativas (concluída)
 
-- Fase 2 — Notificações nativas via `tauri-plugin-notification` quando
-  alguém atribui uma demanda a você ou comenta em demanda sua (RF-19)
-- Fase 3 — Badge contador no tray icon (RF-20)
+- [x] `tauri-plugin-notification` adicionado (Cargo + npm) + permissão
+      `notification:default` em capabilities/default.json + init no
+      Rust
+- [x] Migration `replica_identity_full` em demands e comments — sem
+      isso o `payload.old` do realtime vinha sem os campos, impedindo
+      detectar reatribuição
+- [x] `subscribeToDemands` agora entrega `{ new, old }` em todos os
+      eventos
+- [x] `src/lib/notifications.ts`: `ensureNotificationPermission()` com
+      cache em memória e `notify(title, body)`
+- [x] `subscribeToAllCommentInserts` (sem filtro de demand_id) para
+      cruzar com lista local e decidir se notifica
+- [x] Dashboard dispara notificação em:
+      - reatribuição: `new.assignee_id === me && old.assignee_id !== me`
+      - comentário INSERT em demanda onde sou assignee/created_by e o
+        author não sou eu
+- [x] Validado em build de produção em 2026-06-05. Em dev (`tauri dev`)
+      o binary não vai pra um `.app` registrado no LaunchServices, então
+      `sendNotification` é despachado mas o macOS ignora — comportamento
+      esperado, só visível em `tauri build`.
+
+**Follow-ups da fase de notificações:**
+
+- Clicar na notificação deve focar a janela main e abrir o drawer da
+  demanda correspondente. Tauri 2 expõe action listeners no plugin
+  notification; precisa anexar `demand_id` como payload na chamada
+  e tratar o evento no `lib.rs` (ou via `onAction` no JS) chamando
+  setSelectedDemandId.
+
+### Fase 3 — Badge no tray icon (próxima)
 
 ## Regras para você (Claude Code)
 

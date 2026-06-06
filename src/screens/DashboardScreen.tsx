@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { listDemands, subscribeToDemands } from "../lib/demands";
+import { subscribeToAllCommentInserts } from "../lib/comments";
+import { ensureNotificationPermission, notify } from "../lib/notifications";
 import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileOption } from "../lib/lookups";
 import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
 import { KanbanBoard } from "../components/KanbanBoard";
@@ -70,8 +72,13 @@ function formatRelative(iso: string): string {
   return date.toLocaleDateString("pt-BR");
 }
 
+function demandLabel(d: { title: string; description: string }): string {
+  return d.title || d.description.slice(0, 80);
+}
+
 export function DashboardScreen() {
   const { user, signOut } = useAuth();
+  const currentUserId = user?.id ?? null;
   const [demands, setDemands] = useState<Demand[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,28 +125,78 @@ export function DashboardScreen() {
     })();
   }, []);
 
-  // Subscreve realtime
+  // Pede permissão de notificação uma vez por sessão
   useEffect(() => {
-    const unsubscribe = subscribeToDemands((event, demand) => {
+    void ensureNotificationPermission();
+  }, []);
+
+  // Referência sempre atualizada de demandas + user atual, usadas dentro
+  // dos callbacks de realtime (que rodam fora do ciclo de render).
+  const demandsRef = useRef<Demand[]>([]);
+  useEffect(() => {
+    demandsRef.current = demands;
+  }, [demands]);
+  const currentUserIdRef = useRef<string | null>(currentUserId);
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId;
+  }, [currentUserId]);
+
+  // Subscreve realtime de demandas
+  useEffect(() => {
+    const unsubscribe = subscribeToDemands((event, change) => {
       setDemands((prev) => {
-        if (event === "INSERT") {
-          if (prev.some((d) => d.id === demand.id)) return prev;
-          return [demand, ...prev];
+        if (event === "INSERT" && change.new) {
+          if (prev.some((d) => d.id === change.new!.id)) return prev;
+          return [change.new, ...prev];
         }
-        if (event === "UPDATE") {
-          return prev.map((d) => (d.id === demand.id ? demand : d));
+        if (event === "UPDATE" && change.new) {
+          return prev.map((d) => (d.id === change.new!.id ? change.new! : d));
         }
-        if (event === "DELETE") {
-          return prev.filter((d) => d.id !== demand.id);
+        if (event === "DELETE" && change.old) {
+          return prev.filter((d) => d.id !== change.old!.id);
         }
         return prev;
       });
+
+      // Notifica reatribuição para o usuário atual
+      const me = currentUserIdRef.current;
+      if (
+        event === "UPDATE" &&
+        change.new &&
+        me &&
+        change.new.assignee_id === me &&
+        change.old?.assignee_id !== me
+      ) {
+        void notify(
+          "Demanda atribuída a você",
+          demandLabel(change.new),
+        );
+      }
     });
     setRealtimeConnected(true);
     return () => {
       setRealtimeConnected(false);
       unsubscribe();
     };
+  }, []);
+
+  // Subscreve INSERTs de comentários em qualquer demanda e notifica os que
+  // chegam em demandas em que sou responsável ou criador (e que não foram
+  // feitos por mim).
+  useEffect(() => {
+    const unsubscribe = subscribeToAllCommentInserts((comment) => {
+      const me = currentUserIdRef.current;
+      if (!me) return;
+      if (comment.author_id === me) return;
+      const demand = demandsRef.current.find((d) => d.id === comment.demand_id);
+      if (!demand) return;
+      if (demand.assignee_id !== me && demand.created_by !== me) return;
+      void notify(
+        `Novo comentário em "${demandLabel(demand)}"`,
+        comment.content.slice(0, 140),
+      );
+    });
+    return unsubscribe;
   }, []);
 
   const selectedDemand = useMemo(

@@ -88,3 +88,27 @@ export function subscribeToComments(
     void supabase.removeChannel(channel);
   };
 }
+
+/**
+ * Subscreve INSERTs de comentários em qualquer demanda. Usado pelo Dashboard
+ * para disparar notificações nativas em comentários relevantes ao usuário.
+ */
+export function subscribeToAllCommentInserts(
+  onInsert: (comment: Comment) => void,
+): () => void {
+  const channel = supabase
+    .channel("public:comments:all")
+    .on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "comments" },
+      (payload) => {
+        const row = payload.new as Comment | undefined;
+        if (row) onInsert(row);
+      },
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
