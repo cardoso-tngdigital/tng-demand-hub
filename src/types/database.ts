@@ -57,6 +57,7 @@ export interface Demand {
   ai_cost_micro: number | null;
   captured_via: CapturedVia;
   comments_count: number;
+  attachments_count: number;
   completed_at: string | null;
   created_at: string;
   updated_at: string;

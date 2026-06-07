@@ -29,6 +29,7 @@ export function makeDemand(over: Partial<Demand> = {}): Demand {
     ai_cost_micro: null,
     captured_via: "hotkey",
     comments_count: 0,
+    attachments_count: 0,
     completed_at: null,
     created_at: "2026-06-06T10:00:00Z",
     updated_at: "2026-06-06T10:00:00Z",

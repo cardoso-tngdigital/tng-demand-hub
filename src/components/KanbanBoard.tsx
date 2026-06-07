@@ -1,6 +1,7 @@
 import { useRef, useState, type DragEvent } from "react";
 import { updateDemand } from "../lib/demands";
 import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
+import { CardBadges } from "../screens/DashboardScreen";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 
 const COLUMNS: { status: DemandStatus; label: string; accent: string }[] = [
@@ -30,9 +31,13 @@ function formatRelative(iso: string): string {
 
 export function KanbanBoard({
   demands,
+  profileNameById,
   onSelectDemand,
 }: {
   demands: Demand[];
+  // Map id → nome do responsável. Carregado uma vez no Dashboard e passado
+  // pra cá pra evitar lookup linear por card.
+  profileNameById: Map<string, string>;
   onSelectDemand: (id: string) => void;
 }) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -102,6 +107,9 @@ export function KanbanBoard({
                   <KanbanCard
                     key={d.id}
                     demand={d}
+                    assigneeName={
+                      d.assignee_id ? profileNameById.get(d.assignee_id) ?? null : null
+                    }
                     dragging={draggingId === d.id}
                     onDragStart={(e) => {
                       e.dataTransfer.effectAllowed = "move";
@@ -128,12 +136,14 @@ export function KanbanBoard({
 
 function KanbanCard({
   demand,
+  assigneeName,
   dragging,
   onDragStart,
   onDragEnd,
   onSelect,
 }: {
   demand: Demand;
+  assigneeName: string | null;
   dragging: boolean;
   onDragStart: (e: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
@@ -165,24 +175,8 @@ function KanbanCard({
           {demand.title || htmlToPlainText(legacyToHtml(demand.description)).slice(0, 80)}
         </p>
       </div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-tng-marine-400">
-        <span className="shrink-0">{formatRelative(demand.created_at)}</span>
-        <div className="flex min-w-0 items-center gap-1.5">
-          {demand.tags.length > 0 && (
-            <span className="truncate text-tng-marine-300">
-              {demand.tags.slice(0, 2).join(" · ")}
-            </span>
-          )}
-          {demand.comments_count > 0 && (
-            <span
-              className="shrink-0 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-tng-marine-200"
-              title={`${demand.comments_count} comentário${demand.comments_count === 1 ? "" : "s"}`}
-            >
-              💬 {demand.comments_count}
-            </span>
-          )}
-        </div>
-      </div>
+      <CardBadges demand={demand} assigneeName={assigneeName} className="mt-2" />
+      <p className="mt-1.5 text-[10px] text-tng-marine-400">{formatRelative(demand.created_at)}</p>
     </div>
   );
 }

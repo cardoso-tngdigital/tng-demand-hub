@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { listDemands, subscribeToDemands } from "../lib/demands";
 import { subscribeToAllCommentInserts } from "../lib/comments";
@@ -21,28 +21,19 @@ import { RulesAdmin } from "../components/RulesAdmin";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { OnboardingTour } from "../components/OnboardingTour";
 import { listAllProfiles } from "../lib/profiles";
-import type { Demand, DemandPriority, DemandStatus } from "../types/database";
+import type {
+  Demand,
+  DemandInfrastructure,
+  DemandPriority,
+  DemandStatus,
+} from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
 
-type StatusFilter = DemandStatus | "all";
+// "overdue" não é um status real do banco — é um filtro composto (prazo
+// passou e a demanda ainda está aberta). Tratado dentro de filteredDemands.
+type StatusFilter = DemandStatus | "all" | "overdue";
 type PriorityFilter = DemandPriority | "all";
 type RefFilter = string | "all" | "none";
-
-const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
-  { value: "all", label: "Todos os status" },
-  { value: "todo", label: "A fazer" },
-  { value: "doing", label: "Em andamento" },
-  { value: "done", label: "Concluída" },
-  { value: "archived", label: "Arquivada" },
-];
-
-const PRIORITY_FILTER_OPTIONS: { value: PriorityFilter; label: string }[] = [
-  { value: "all", label: "Toda prioridade" },
-  { value: "urgente", label: "Urgente" },
-  { value: "alta", label: "Alta" },
-  { value: "media", label: "Média" },
-  { value: "baixa", label: "Baixa" },
-];
 
 const STATUS_LABEL: Record<DemandStatus, string> = {
   todo: "A fazer",
@@ -294,9 +285,29 @@ export function DashboardScreen() {
     [demands, selectedDemandId],
   );
 
+  // Lookup name por id para badges nos cards e drawer — calculado uma única
+  // vez aqui em vez de em cada card.
+  const profileNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of profiles) m.set(p.id, p.full_name);
+    return m;
+  }, [profiles]);
+
+  // Demanda atrasada = tem prazo, prazo já passou, e ainda está aberta.
+  // Aplica tanto pro filtro "Atrasadas" quanto pra contagem do card.
+  const isOverdue = useCallback((d: Demand): boolean => {
+    if (!d.due_date) return false;
+    if (d.status === "done" || d.status === "archived") return false;
+    return d.due_date < new Date().toISOString().slice(0, 10);
+  }, []);
+
   const filteredDemands = useMemo(() => {
     return demands.filter((d) => {
-      if (statusFilter !== "all" && d.status !== statusFilter) return false;
+      if (statusFilter === "overdue") {
+        if (!isOverdue(d)) return false;
+      } else if (statusFilter !== "all" && d.status !== statusFilter) {
+        return false;
+      }
       if (priorityFilter !== "all" && d.priority !== priorityFilter) return false;
       if (clientFilter === "none" && d.client_id !== null) return false;
       if (clientFilter !== "all" && clientFilter !== "none" && d.client_id !== clientFilter) return false;
@@ -304,7 +315,7 @@ export function DashboardScreen() {
       if (assigneeFilter !== "all" && assigneeFilter !== "none" && d.assignee_id !== assigneeFilter) return false;
       return true;
     });
-  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter]);
+  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter, isOverdue]);
 
   const filtersActive =
     statusFilter !== "all" ||
@@ -319,21 +330,17 @@ export function DashboardScreen() {
     setAssigneeFilter("all");
   }
 
+  // Stats são calculadas sobre o conjunto TOTAL (não filtrado) — assim cada
+  // card mostra o universo do filtro que ele representa, não a contagem
+  // intersectada com filtros atuais. Senão, clicar em "A fazer" deixaria os
+  // outros cards em 0 e a UI ficaria confusa.
   const stats = useMemo(() => {
-    const total = filteredDemands.length;
-    const todo = filteredDemands.filter((d) => d.status === "todo").length;
-    const doing = filteredDemands.filter((d) => d.status === "doing").length;
-    const today = filteredDemands.filter((d) => {
-      const now = new Date();
-      const created = new Date(d.created_at);
-      return (
-        created.getDate() === now.getDate() &&
-        created.getMonth() === now.getMonth() &&
-        created.getFullYear() === now.getFullYear()
-      );
-    }).length;
-    return { total, todo, doing, today };
-  }, [filteredDemands]);
+    const total = demands.length;
+    const todo = demands.filter((d) => d.status === "todo").length;
+    const doing = demands.filter((d) => d.status === "doing").length;
+    const overdue = demands.filter(isOverdue).length;
+    return { total, todo, doing, overdue };
+  }, [demands, isOverdue]);
 
   return (
     <div className="flex h-screen flex-col bg-tng-marine-900">
@@ -410,23 +417,45 @@ export function DashboardScreen() {
         </div>
       </header>
 
-      {/* Stats */}
+      {/* Stats clicáveis — funcionam como filtro por status. Cada card
+          alterna entre "filtrar por este status" e "todos". */}
       <section className="grid grid-cols-4 gap-3 border-b border-tng-marine-700 px-6 py-4">
-        <Stat label="Total" value={stats.total} />
-        <Stat label="A fazer" value={stats.todo} accent="text-sky-400" />
-        <Stat label="Em andamento" value={stats.doing} accent="text-tng-orange-400" />
-        <Stat label="Hoje" value={stats.today} accent="text-emerald-400" />
+        <StatFilterCard
+          label="Total"
+          value={stats.total}
+          active={statusFilter === "all"}
+          onClick={() => setStatusFilter("all")}
+        />
+        <StatFilterCard
+          label="A fazer"
+          value={stats.todo}
+          accent="text-sky-400"
+          active={statusFilter === "todo"}
+          onClick={() => setStatusFilter(statusFilter === "todo" ? "all" : "todo")}
+        />
+        <StatFilterCard
+          label="Em andamento"
+          value={stats.doing}
+          accent="text-tng-orange-400"
+          active={statusFilter === "doing"}
+          onClick={() => setStatusFilter(statusFilter === "doing" ? "all" : "doing")}
+        />
+        <StatFilterCard
+          label="Atrasadas"
+          value={stats.overdue}
+          accent="text-red-400"
+          active={statusFilter === "overdue"}
+          onClick={() => setStatusFilter(statusFilter === "overdue" ? "all" : "overdue")}
+        />
       </section>
 
       {/* Filtros */}
       <FilterBar
-        statusFilter={statusFilter}
         priorityFilter={priorityFilter}
         clientFilter={clientFilter}
         assigneeFilter={assigneeFilter}
         clients={clients}
         profiles={profiles}
-        onStatusChange={setStatusFilter}
         onPriorityChange={setPriorityFilter}
         onClientChange={setClientFilter}
         onAssigneeChange={setAssigneeFilter}
@@ -461,6 +490,9 @@ export function DashboardScreen() {
                 <DemandCard
                   key={demand.id}
                   demand={demand}
+                  assigneeName={
+                    demand.assignee_id ? profileNameById.get(demand.assignee_id) ?? null : null
+                  }
                   onSelect={() => setSelectedDemandId(demand.id)}
                 />
               ))}
@@ -469,6 +501,7 @@ export function DashboardScreen() {
         ) : (
           <KanbanBoard
             demands={filteredDemands}
+            profileNameById={profileNameById}
             onSelectDemand={setSelectedDemandId}
           />
         )}
@@ -554,84 +587,121 @@ function ViewToggle({
   );
 }
 
+const PRIORITY_CHIPS: { value: DemandPriority; label: string; dot: string }[] = [
+  { value: "urgente", label: "Urgente", dot: "bg-red-500" },
+  { value: "alta", label: "Alta", dot: "bg-tng-orange-400" },
+  { value: "media", label: "Média", dot: "bg-sky-400" },
+  { value: "baixa", label: "Baixa", dot: "bg-tng-marine-400" },
+];
+
 function FilterBar(props: {
-  statusFilter: StatusFilter;
   priorityFilter: PriorityFilter;
   clientFilter: RefFilter;
   assigneeFilter: RefFilter;
   clients: ClientOption[];
   profiles: ProfileOption[];
-  onStatusChange: (v: StatusFilter) => void;
   onPriorityChange: (v: PriorityFilter) => void;
   onClientChange: (v: RefFilter) => void;
   onAssigneeChange: (v: RefFilter) => void;
   active: boolean;
   onClear: () => void;
 }) {
+  function togglePriority(p: DemandPriority) {
+    props.onPriorityChange(props.priorityFilter === p ? "all" : p);
+  }
+  function toggleAssignee(v: string) {
+    props.onAssigneeChange(props.assigneeFilter === v ? "all" : v);
+  }
+
   return (
-    <section className="flex flex-wrap items-center gap-2 border-b border-tng-marine-700 bg-tng-marine-800/30 px-6 py-2">
-      <FilterSelect
-        value={props.statusFilter}
-        onChange={(v) => props.onStatusChange(v as StatusFilter)}
-        active={props.statusFilter !== "all"}
-      >
-        {STATUS_FILTER_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value} className="bg-tng-marine-800">
-            {o.label}
-          </option>
-        ))}
-      </FilterSelect>
-
-      <FilterSelect
-        value={props.priorityFilter}
-        onChange={(v) => props.onPriorityChange(v as PriorityFilter)}
-        active={props.priorityFilter !== "all"}
-      >
-        {PRIORITY_FILTER_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value} className="bg-tng-marine-800">
-            {o.label}
-          </option>
-        ))}
-      </FilterSelect>
-
-      <FilterSelect
-        value={props.clientFilter}
-        onChange={(v) => props.onClientChange(v as RefFilter)}
-        active={props.clientFilter !== "all"}
-      >
-        <option value="all" className="bg-tng-marine-800">Todos os clientes</option>
-        <option value="none" className="bg-tng-marine-800">Sem cliente</option>
-        {props.clients.map((c) => (
-          <option key={c.id} value={c.id} className="bg-tng-marine-800">
-            {c.alias || c.name}
-          </option>
-        ))}
-      </FilterSelect>
-
-      <FilterSelect
-        value={props.assigneeFilter}
-        onChange={(v) => props.onAssigneeChange(v as RefFilter)}
-        active={props.assigneeFilter !== "all"}
-      >
-        <option value="all" className="bg-tng-marine-800">Todos responsáveis</option>
-        <option value="none" className="bg-tng-marine-800">Sem responsável</option>
-        {props.profiles.map((p) => (
-          <option key={p.id} value={p.id} className="bg-tng-marine-800">
-            {p.full_name}
-          </option>
-        ))}
-      </FilterSelect>
-
-      {props.active && (
-        <button
-          type="button"
-          onClick={props.onClear}
-          className="ml-auto text-[11px] text-tng-marine-300 hover:text-tng-orange-400"
+    <section className="space-y-1.5 border-b border-tng-marine-700 bg-tng-marine-800/30 px-6 py-2.5">
+      {/* Linha 1: cliente (select compacto, há potencialmente muitos) +
+          prioridade em chips (apenas 4 opções). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterSelect
+          value={props.clientFilter}
+          onChange={(v) => props.onClientChange(v as RefFilter)}
+          active={props.clientFilter !== "all"}
         >
-          Limpar filtros
-        </button>
-      )}
+          <option value="all" className="bg-tng-marine-800">Todos os clientes</option>
+          <option value="none" className="bg-tng-marine-800">Sem cliente</option>
+          {props.clients.map((c) => (
+            <option key={c.id} value={c.id} className="bg-tng-marine-800">
+              {c.alias || c.name}
+            </option>
+          ))}
+        </FilterSelect>
+
+        <div className="flex flex-wrap items-center gap-1">
+          {PRIORITY_CHIPS.map((p) => (
+            <Chip
+              key={p.value}
+              active={props.priorityFilter === p.value}
+              onClick={() => togglePriority(p.value)}
+            >
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${p.dot}`} />
+              {p.label}
+            </Chip>
+          ))}
+        </div>
+
+        {props.active && (
+          <button
+            type="button"
+            onClick={props.onClear}
+            className="ml-auto text-[11px] text-tng-marine-300 hover:text-tng-orange-400"
+          >
+            Limpar filtros
+          </button>
+        )}
+      </div>
+
+      {/* Linha 2: responsáveis em chips — um por membro ativo + "Sem
+          responsável". A linha se expande automaticamente conforme o time
+          cresce; equipe atual cabe em 1 linha sem rolar. */}
+      <div className="flex flex-wrap items-center gap-1">
+        <Chip
+          active={props.assigneeFilter === "none"}
+          onClick={() => toggleAssignee("none")}
+        >
+          Sem responsável
+        </Chip>
+        {props.profiles.map((p) => (
+          <Chip
+            key={p.id}
+            active={props.assigneeFilter === p.id}
+            onClick={() => toggleAssignee(p.id)}
+          >
+            {p.full_name}
+          </Chip>
+        ))}
+      </div>
     </section>
+  );
+}
+
+function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+        active
+          ? "border-tng-orange-400 bg-tng-orange-400/15 text-tng-orange-200"
+          : "border-tng-marine-600 text-tng-marine-200 hover:border-tng-marine-400 hover:text-tng-marine-50"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -675,26 +745,101 @@ function FilteredEmptyState({ onClear }: { onClear: () => void }) {
   );
 }
 
-function Stat({
-  label,
-  value,
-  accent = "text-tng-marine-50",
+// Badges compartilhados entre DemandCard (lista) e KanbanCard. Pequenos
+// "selos" que aparecem no rodapé do card pra dar contexto sem abrir o
+// drawer: responsável, infraestrutura, anexos, comentários.
+const INFRASTRUCTURE_BADGE: Record<DemandInfrastructure, { label: string; cls: string }> = {
+  wordpress: { label: "WP", cls: "bg-sky-500/15 text-sky-300" },
+  site_ia: { label: "Site IA", cls: "bg-violet-500/15 text-violet-300" },
+};
+
+export function CardBadges({
+  demand,
+  assigneeName,
+  className = "",
 }: {
-  label: string;
-  value: number;
-  accent?: string;
+  demand: Demand;
+  assigneeName: string | null;
+  className?: string;
 }) {
+  const infra = demand.infrastructure ? INFRASTRUCTURE_BADGE[demand.infrastructure] : null;
   return (
-    <div className="rounded-lg border border-tng-marine-700 bg-tng-marine-800/40 px-4 py-3">
-      <div className={`font-sans text-2xl font-semibold ${accent}`}>{value}</div>
-      <div className="text-[11px] uppercase tracking-wider text-tng-marine-300">
-        {label}
-      </div>
+    <div className={`flex flex-wrap items-center gap-1 ${className}`}>
+      {assigneeName && (
+        <span
+          className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-100"
+          title={`Responsável: ${assigneeName}`}
+        >
+          👤 {assigneeName}
+        </span>
+      )}
+      {infra && (
+        <span
+          className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${infra.cls}`}
+          title="Infraestrutura"
+        >
+          {infra.label}
+        </span>
+      )}
+      {demand.attachments_count > 0 && (
+        <span
+          className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-200"
+          title={`${demand.attachments_count} anexo${demand.attachments_count === 1 ? "" : "s"}`}
+        >
+          📎 {demand.attachments_count}
+        </span>
+      )}
+      {demand.comments_count > 0 && (
+        <span
+          className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-200"
+          title={`${demand.comments_count} comentário${demand.comments_count === 1 ? "" : "s"}`}
+        >
+          💬 {demand.comments_count}
+        </span>
+      )}
     </div>
   );
 }
 
-function DemandCard({ demand, onSelect }: { demand: Demand; onSelect: () => void }) {
+function StatFilterCard({
+  label,
+  value,
+  active,
+  accent = "text-tng-marine-50",
+  onClick,
+}: {
+  label: string;
+  value: number;
+  active: boolean;
+  accent?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-lg border bg-tng-marine-800/40 px-4 py-3 text-left transition ${
+        active
+          ? "border-tng-orange-400 bg-tng-marine-800/80"
+          : "border-tng-marine-700 hover:border-tng-marine-500 hover:bg-tng-marine-800/60"
+      }`}
+    >
+      <div className={`font-sans text-2xl font-semibold ${accent}`}>{value}</div>
+      <div className="text-[11px] uppercase tracking-wider text-tng-marine-300">{label}</div>
+    </button>
+  );
+}
+
+function DemandCard({
+  demand,
+  assigneeName,
+  onSelect,
+}: {
+  demand: Demand;
+  assigneeName: string | null;
+  onSelect: () => void;
+}) {
   const previewText = htmlToPlainText(legacyToHtml(demand.description));
   const title = demand.title || previewText.slice(0, 80);
   const showPreview =
@@ -725,16 +870,13 @@ function DemandCard({ demand, onSelect }: { demand: Demand; onSelect: () => void
           {showPreview && (
             <p className="mt-1 line-clamp-2 text-xs text-tng-marine-300">{previewText}</p>
           )}
+          <CardBadges
+            demand={demand}
+            assigneeName={assigneeName}
+            className="mt-2"
+          />
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {demand.comments_count > 0 && (
-            <span
-              className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-200"
-              title={`${demand.comments_count} comentário${demand.comments_count === 1 ? "" : "s"}`}
-            >
-              💬 {demand.comments_count}
-            </span>
-          )}
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLE[demand.status]}`}
           >
