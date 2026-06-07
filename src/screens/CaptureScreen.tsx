@@ -13,7 +13,7 @@ import { extractDemand, type ExtractedDemand } from "../lib/ai";
 import { supabase } from "../lib/supabase/client";
 import {
   buildPendingAttachment,
-  categoryIcon,
+  categoryIconClass,
   disposePending,
   formatBytes,
   INLINE_PER_FILE_BYTES,
@@ -562,8 +562,7 @@ function InputView(props: {
               aria-label="Fechar"
               className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
             >
-              ✕
-            </button>
+              <i className="fa-solid fa-xmark" aria-hidden="true" />            </button>
           </div>
         </div>
 
@@ -595,7 +594,7 @@ function InputView(props: {
             {dragOver ? (
               <span className="text-tng-orange-400">Solte para anexar…</span>
             ) : (
-              <>📎 Cole, arraste arquivos ou{" "}
+              <><i className="fa-solid fa-paperclip mr-1" aria-hidden="true" /> Cole, arraste arquivos ou{" "}
                 <button
                   type="button"
                   onClick={() => void handlePickFiles()}
@@ -667,8 +666,8 @@ function AttachmentRow({
           className="h-7 w-7 shrink-0 rounded object-cover"
         />
       ) : (
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-tng-marine-700 text-sm">
-          {categoryIcon(pending.category)}
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-tng-marine-700 text-sm text-tng-marine-200">
+          <i className={categoryIconClass(pending.category)} aria-hidden="true" />
         </span>
       )}
       <div className="min-w-0 flex-1">
@@ -681,8 +680,7 @@ function AttachmentRow({
         aria-label={`Remover ${pending.file.name}`}
         className="shrink-0 rounded p-1 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
       >
-        ✕
-      </button>
+        <i className="fa-solid fa-xmark" aria-hidden="true" />      </button>
     </li>
   );
 }
@@ -793,8 +791,7 @@ function ConfirmView(props: {
               aria-label="Fechar"
               className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
             >
-              ✕
-            </button>
+              <i className="fa-solid fa-xmark" aria-hidden="true" />            </button>
           </div>
         </div>
 

@@ -133,8 +133,7 @@ export function AiUsageAdmin({
           aria-label="Fechar"
           className="rounded-md p-1.5 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
         >
-          ✕
-        </button>
+          <i className="fa-solid fa-xmark" aria-hidden="true" />        </button>
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
@@ -403,8 +402,7 @@ function UsageDetailDrawer({
                 aria-label="Fechar"
                 className="rounded-md p-1.5 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
               >
-                ✕
-              </button>
+                <i className="fa-solid fa-xmark" aria-hidden="true" />              </button>
             </header>
 
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-xs">

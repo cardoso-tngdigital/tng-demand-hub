@@ -668,14 +668,16 @@ function wrap(pending: PendingAttachment, content: string): AttachmentTextPayloa
   };
 }
 
-export function categoryIcon(c: AttachmentCategory): string {
+// Classes Font Awesome (kit no index.html). Consumer faz
+// <i className={categoryIconClass(c)} aria-hidden="true" />.
+export function categoryIconClass(c: AttachmentCategory): string {
   switch (c) {
-    case "image": return "🖼️";
-    case "audio": return "🎵";
-    case "video": return "🎬";
-    case "pdf":   return "📄";
-    case "doc":   return "📄";
-    case "sheet": return "📊";
-    case "text":  return "📝";
+    case "image": return "fa-solid fa-image";
+    case "audio": return "fa-solid fa-music";
+    case "video": return "fa-solid fa-video";
+    case "pdf":   return "fa-solid fa-file-pdf";
+    case "doc":   return "fa-solid fa-file-word";
+    case "sheet": return "fa-solid fa-file-excel";
+    case "text":  return "fa-solid fa-file-lines";
   }
 }

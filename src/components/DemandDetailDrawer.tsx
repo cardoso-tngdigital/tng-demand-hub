@@ -5,7 +5,7 @@ import { updateDemand, type DemandPatch } from "../lib/demands";
 import type { ClientOption, ProfileOption } from "../lib/lookups";
 import {
   buildPendingAttachment,
-  categoryIcon,
+  categoryIconClass,
   categorize,
   disposePending,
   formatBytes,
@@ -26,6 +26,7 @@ import type {
   Attachment,
   Demand,
   DemandHistoryRow,
+  DemandInfrastructure,
   DemandPriority,
   DemandStatus,
 } from "../types/database";
@@ -174,7 +175,7 @@ function DemandDetailBody({
           aria-label="Fechar"
           className="rounded-md p-1.5 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
         >
-          ✕
+          <i className="fa-solid fa-xmark" aria-hidden="true" />
         </button>
       </header>
 
@@ -241,6 +242,21 @@ function DemandDetailBody({
               className="block w-full rounded-md border border-tng-marine-600 bg-tng-marine-800 px-2 py-1 text-sm text-tng-marine-100 focus:border-tng-orange-400 focus:outline-none"
             />
           </EditableField>
+
+          <div className="col-span-2">
+            <EditableSelect
+              label="Infraestrutura"
+              value={demand.infrastructure ?? ""}
+              onChange={(v) =>
+                editor.save({ infrastructure: (v as DemandInfrastructure) || null })
+              }
+              disabled={editor.saving}
+            >
+              <option value="" className="bg-tng-marine-800">— Não classificada</option>
+              <option value="wordpress" className="bg-tng-marine-800">WordPress</option>
+              <option value="site_ia" className="bg-tng-marine-800">Site com IA</option>
+            </EditableSelect>
+          </div>
         </div>
 
         <Section title="Tags (separadas por vírgula)">
@@ -302,26 +318,26 @@ function ClientLinks({
   const client = clientId ? clients.find((c) => c.id === clientId) : null;
   if (!client) return null;
 
-  const links: { label: string; href: string; icon: string }[] = [];
+  const links: { label: string; href: string; iconClass: string }[] = [];
   if (client.google_business_url) {
     links.push({
       label: "Google Meu Negócio",
       href: client.google_business_url,
-      icon: "🏪",
+      iconClass: "fa-solid fa-store",
     });
   }
   if (client.whatsapp_group_url) {
     links.push({
       label: "Grupo no WhatsApp",
       href: client.whatsapp_group_url,
-      icon: "💬",
+      iconClass: "fa-brands fa-whatsapp",
     });
   }
   for (let i = 0; i < client.drive_urls.length; i++) {
     links.push({
       label: client.drive_urls.length > 1 ? `Drive ${i + 1}` : "Google Drive",
       href: client.drive_urls[i],
-      icon: "📁",
+      iconClass: "fa-brands fa-google-drive",
     });
   }
   if (links.length === 0) return null;
@@ -345,9 +361,9 @@ function ClientLinks({
               title={l.href}
               className="flex items-center gap-1.5 rounded-md border border-tng-marine-600 bg-tng-marine-800/60 px-2 py-1 text-[11px] text-tng-marine-100 transition hover:border-tng-orange-400 hover:text-tng-orange-300"
             >
-              <span>{l.icon}</span>
+              <i className={l.iconClass} aria-hidden="true" />
               <span>{l.label}</span>
-              <span className="text-tng-marine-400">↗</span>
+              <i className="fa-solid fa-arrow-up-right-from-square text-[9px] text-tng-marine-400" aria-hidden="true" />
             </button>
           </li>
         ))}
@@ -766,8 +782,8 @@ function AttachmentItem({
         onClick={onOpen}
         className="flex w-full items-center gap-2 rounded-md bg-tng-marine-700/40 px-2.5 py-2 text-left transition hover:bg-tng-marine-700"
       >
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-tng-marine-800 text-sm">
-          {categoryIcon(category)}
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-tng-marine-800 text-sm text-tng-marine-300">
+          <i className={categoryIconClass(category)} aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs text-tng-marine-100">{attachment.file_name}</p>
@@ -896,7 +912,9 @@ function AttachmentViewer({
           />
         ) : (
           <div className="rounded-lg bg-tng-marine-800/80 p-8 text-center">
-            <div className="mb-3 text-5xl">{categoryIcon(category)}</div>
+            <div className="mb-3 text-5xl text-tng-marine-300">
+              <i className={categoryIconClass(category)} aria-hidden="true" />
+            </div>
             <p className="mb-1 text-sm text-tng-marine-100">{attachment.file_name}</p>
             <p className="text-xs text-tng-marine-300">
               Pré-visualização não suportada para este tipo.

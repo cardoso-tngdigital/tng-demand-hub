@@ -133,8 +133,7 @@ export function RulesAdmin({
             aria-label="Fechar"
             className="rounded-md p-1.5 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
           >
-            ✕
-          </button>
+            <i className="fa-solid fa-xmark" aria-hidden="true" />          </button>
         </div>
       </header>
 

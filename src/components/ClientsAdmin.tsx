@@ -110,8 +110,7 @@ export function ClientsAdmin({ open, onClose }: { open: boolean; onClose: () => 
             aria-label="Fechar"
             className="rounded-md p-1.5 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
           >
-            ✕
-          </button>
+            <i className="fa-solid fa-xmark" aria-hidden="true" />          </button>
         </div>
       </header>
 
@@ -378,8 +377,7 @@ function ClientForm({
                     aria-label="Remover link"
                     className="shrink-0 rounded-md border border-tng-marine-600 px-2 py-1 text-[10px] text-tng-marine-300 hover:border-red-400 hover:text-red-300 disabled:opacity-30"
                   >
-                    ✕
-                  </button>
+                    <i className="fa-solid fa-xmark" aria-hidden="true" />                  </button>
                 </div>
               ))}
               <button

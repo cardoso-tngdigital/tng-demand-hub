@@ -301,12 +301,21 @@ export function DashboardScreen() {
     return d.due_date < new Date().toISOString().slice(0, 10);
   }, []);
 
+  // Mostra demandas concluídas e arquivadas. Por padrão a lista esconde
+  // (foco no que está em aberto), mas o user pode reativar via toggle pra
+  // revisar histórico ou re-abrir.
+  const [showClosed, setShowClosed] = useState(false);
+
   const filteredDemands = useMemo(() => {
     return demands.filter((d) => {
       if (statusFilter === "overdue") {
         if (!isOverdue(d)) return false;
       } else if (statusFilter !== "all" && d.status !== statusFilter) {
         return false;
+      } else if (statusFilter === "all" && !showClosed) {
+        // Lista padrão = apenas abertas. Done/archived só aparecem com
+        // toggle ativo ou quando o user filtra explicitamente por elas.
+        if (d.status === "done" || d.status === "archived") return false;
       }
       if (priorityFilter !== "all" && d.priority !== priorityFilter) return false;
       if (clientFilter === "none" && d.client_id !== null) return false;
@@ -315,7 +324,7 @@ export function DashboardScreen() {
       if (assigneeFilter !== "all" && assigneeFilter !== "none" && d.assignee_id !== assigneeFilter) return false;
       return true;
     });
-  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter, isOverdue]);
+  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter, isOverdue, showClosed]);
 
   const filtersActive =
     statusFilter !== "all" ||
@@ -332,13 +341,14 @@ export function DashboardScreen() {
 
   // Stats são calculadas sobre o conjunto TOTAL (não filtrado) — assim cada
   // card mostra o universo do filtro que ele representa, não a contagem
-  // intersectada com filtros atuais. Senão, clicar em "A fazer" deixaria os
-  // outros cards em 0 e a UI ficaria confusa.
+  // intersectada com filtros atuais. "Total" deliberadamente exclui
+  // concluídas e arquivadas: o time olha pra "o que está em aberto", não
+  // pra um histórico que só cresce.
   const stats = useMemo(() => {
-    const total = demands.length;
     const todo = demands.filter((d) => d.status === "todo").length;
     const doing = demands.filter((d) => d.status === "doing").length;
     const overdue = demands.filter(isOverdue).length;
+    const total = todo + doing;
     return { total, todo, doing, overdue };
   }, [demands, isOverdue]);
 
@@ -456,9 +466,12 @@ export function DashboardScreen() {
         assigneeFilter={assigneeFilter}
         clients={clients}
         profiles={profiles}
+        showClosed={showClosed}
+        statusFilter={statusFilter}
         onPriorityChange={setPriorityFilter}
         onClientChange={setClientFilter}
         onAssigneeChange={setAssigneeFilter}
+        onShowClosedChange={setShowClosed}
         active={filtersActive}
         onClear={clearFilters}
       />
@@ -600,9 +613,14 @@ function FilterBar(props: {
   assigneeFilter: RefFilter;
   clients: ClientOption[];
   profiles: ProfileOption[];
+  // Para esconder o toggle quando o user está filtrando por status
+  // específico (ele já decidiu o que ver).
+  statusFilter: StatusFilter;
+  showClosed: boolean;
   onPriorityChange: (v: PriorityFilter) => void;
   onClientChange: (v: RefFilter) => void;
   onAssigneeChange: (v: RefFilter) => void;
+  onShowClosedChange: (v: boolean) => void;
   active: boolean;
   onClear: () => void;
 }) {
@@ -675,6 +693,24 @@ function FilterBar(props: {
             {p.full_name}
           </Chip>
         ))}
+
+        {/* Toggle só faz sentido quando estamos na vista "todas em aberto"
+            (statusFilter=all). Se já filtra por todo/doing/overdue, esse
+            switch não tem efeito. */}
+        {props.statusFilter === "all" && (
+          <button
+            type="button"
+            onClick={() => props.onShowClosedChange(!props.showClosed)}
+            aria-pressed={props.showClosed}
+            className={`ml-auto rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+              props.showClosed
+                ? "border-tng-orange-400 bg-tng-orange-400/15 text-tng-orange-200"
+                : "border-tng-marine-600 text-tng-marine-300 hover:border-tng-marine-400 hover:text-tng-marine-100"
+            }`}
+          >
+            {props.showClosed ? "Ocultar concluídas" : "Mostrar concluídas"}
+          </button>
+        )}
       </div>
     </section>
   );
@@ -745,34 +781,55 @@ function FilteredEmptyState({ onClear }: { onClear: () => void }) {
   );
 }
 
-// Badges compartilhados entre DemandCard (lista) e KanbanCard. Pequenos
-// "selos" que aparecem no rodapé do card pra dar contexto sem abrir o
-// drawer: responsável, infraestrutura, anexos, comentários.
+// Badges compartilhados entre DemandCard (lista) e KanbanCard. Separados
+// em "primary" (status + responsável — sempre presentes) e "secondary"
+// (metadados — só aparecem quando aplicáveis). Layout em duas linhas no
+// canto direito do card.
 const INFRASTRUCTURE_BADGE: Record<DemandInfrastructure, { label: string; cls: string }> = {
   wordpress: { label: "WP", cls: "bg-sky-500/15 text-sky-300" },
   site_ia: { label: "Site IA", cls: "bg-violet-500/15 text-violet-300" },
 };
 
-export function CardBadges({
-  demand,
+export function CardBadgesPrimary({
+  status,
   assigneeName,
-  className = "",
+  omitStatus = false,
 }: {
-  demand: Demand;
+  status: DemandStatus;
   assigneeName: string | null;
-  className?: string;
+  // No Kanban a coluna já indica o status — omitimos pra não duplicar.
+  omitStatus?: boolean;
 }) {
-  const infra = demand.infrastructure ? INFRASTRUCTURE_BADGE[demand.infrastructure] : null;
+  if (omitStatus && !assigneeName) return null;
   return (
-    <div className={`flex flex-wrap items-center gap-1 ${className}`}>
+    <div className="flex items-center justify-end gap-1.5">
+      {!omitStatus && (
+        <span
+          className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLE[status]}`}
+        >
+          {STATUS_LABEL[status]}
+        </span>
+      )}
       {assigneeName && (
         <span
           className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-100"
           title={`Responsável: ${assigneeName}`}
         >
-          👤 {assigneeName}
+          <i className="fa-solid fa-user text-[9px]" aria-hidden="true" />
+          {assigneeName}
         </span>
       )}
+    </div>
+  );
+}
+
+export function CardBadgesSecondary({ demand }: { demand: Demand }) {
+  const infra = demand.infrastructure ? INFRASTRUCTURE_BADGE[demand.infrastructure] : null;
+  const hasAnything =
+    infra || demand.attachments_count > 0 || demand.comments_count > 0;
+  if (!hasAnything) return null;
+  return (
+    <div className="flex items-center justify-end gap-1.5">
       {infra && (
         <span
           className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${infra.cls}`}
@@ -786,7 +843,8 @@ export function CardBadges({
           className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-200"
           title={`${demand.attachments_count} anexo${demand.attachments_count === 1 ? "" : "s"}`}
         >
-          📎 {demand.attachments_count}
+          <i className="fa-solid fa-paperclip text-[9px]" aria-hidden="true" />
+          {demand.attachments_count}
         </span>
       )}
       {demand.comments_count > 0 && (
@@ -794,7 +852,8 @@ export function CardBadges({
           className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-200"
           title={`${demand.comments_count} comentário${demand.comments_count === 1 ? "" : "s"}`}
         >
-          💬 {demand.comments_count}
+          <i className="fa-solid fa-comment text-[9px]" aria-hidden="true" />
+          {demand.comments_count}
         </span>
       )}
     </div>
@@ -870,21 +929,13 @@ function DemandCard({
           {showPreview && (
             <p className="mt-1 line-clamp-2 text-xs text-tng-marine-300">{previewText}</p>
           )}
-          <CardBadges
-            demand={demand}
-            assigneeName={assigneeName}
-            className="mt-2"
-          />
+          <p className="mt-1.5 text-[10px] text-tng-marine-400">
+            {formatRelative(demand.created_at)}
+          </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLE[demand.status]}`}
-          >
-            {STATUS_LABEL[demand.status]}
-          </span>
-          <span className="text-[10px] text-tng-marine-400">
-            {formatRelative(demand.created_at)}
-          </span>
+          <CardBadgesPrimary status={demand.status} assigneeName={assigneeName} />
+          <CardBadgesSecondary demand={demand} />
         </div>
       </div>
     </li>

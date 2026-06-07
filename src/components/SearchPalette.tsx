@@ -120,7 +120,7 @@ export function SearchPalette({
         className="w-full max-w-xl overflow-hidden rounded-xl border border-tng-marine-600 bg-tng-marine-800 shadow-2xl"
       >
         <div className="flex items-center gap-3 border-b border-tng-marine-700 px-4 py-3">
-          <span className="text-tng-marine-400">🔍</span>
+          <i className="fa-solid fa-magnifying-glass text-tng-marine-400" aria-hidden="true" />
           <input
             ref={inputRef}
             value={query}

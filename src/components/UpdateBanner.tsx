@@ -61,8 +61,7 @@ export function UpdateBanner() {
           className="text-tng-marine-300 hover:text-tng-marine-100"
           aria-label="Adiar"
         >
-          ✕
-        </button>
+          <i className="fa-solid fa-xmark" aria-hidden="true" />        </button>
       </div>
     </div>
   );
