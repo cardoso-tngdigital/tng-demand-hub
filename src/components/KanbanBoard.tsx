@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent } from "react";
 import { updateDemand } from "../lib/demands";
 import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
-import { CardBadgesPrimary, CardBadgesSecondary } from "../screens/DashboardScreen";
+import { CardBadges } from "../screens/DashboardScreen";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
 
 const COLUMNS: { status: DemandStatus; label: string; accent: string }[] = [
@@ -175,18 +175,12 @@ function KanbanCard({
           {demand.title || htmlToPlainText(legacyToHtml(demand.description)).slice(0, 80)}
         </p>
       </div>
-      {/* No Kanban a coluna já indica o status, então omitStatus. */}
       <div className="mt-2 flex justify-end">
-        <CardBadgesPrimary
-          status={demand.status}
-          assigneeName={assigneeName}
-          omitStatus
-        />
+        <CardBadges demand={demand} assigneeName={assigneeName} />
       </div>
-      <div className="mt-1 flex items-center justify-between gap-2">
-        <p className="text-[10px] text-tng-marine-400">{formatRelative(demand.created_at)}</p>
-        <CardBadgesSecondary demand={demand} />
-      </div>
+      <p className="mt-1 text-[10px] text-tng-marine-400">
+        {formatRelative(demand.created_at)}
+      </p>
     </div>
   );
 }

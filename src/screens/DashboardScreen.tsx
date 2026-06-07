@@ -35,20 +35,6 @@ type StatusFilter = DemandStatus | "all" | "overdue";
 type PriorityFilter = DemandPriority | "all";
 type RefFilter = string | "all" | "none";
 
-const STATUS_LABEL: Record<DemandStatus, string> = {
-  todo: "A fazer",
-  doing: "Em andamento",
-  done: "Concluída",
-  archived: "Arquivada",
-};
-
-const STATUS_STYLE: Record<DemandStatus, string> = {
-  todo: "bg-tng-marine-600/60 text-tng-marine-100",
-  doing: "bg-tng-orange-400/15 text-tng-orange-300",
-  done: "bg-emerald-500/15 text-emerald-300",
-  archived: "bg-tng-marine-700 text-tng-marine-300",
-};
-
 const PRIORITY_DOT: Record<DemandPriority, string> = {
   baixa: "bg-tng-marine-400",
   media: "bg-sky-400",
@@ -252,6 +238,26 @@ export function DashboardScreen() {
           change.new.id,
         );
       }
+
+      // Notifica conclusão para responsável e criador (exceto quem marcou).
+      // wasLocalChange evita o caso "concluí pelo botão e recebi notif do
+      // próprio eco do realtime".
+      if (
+        event === "UPDATE" &&
+        change.new &&
+        change.old &&
+        me &&
+        change.new.status === "done" &&
+        change.old.status !== "done" &&
+        (change.new.assignee_id === me || change.new.created_by === me) &&
+        !wasLocalChange(change.new.id)
+      ) {
+        void notifyAboutDemand(
+          "Demanda concluída",
+          demandLabel(change.new),
+          change.new.id,
+        );
+      }
     });
     setRealtimeConnected(true);
     return () => {
@@ -325,24 +331,18 @@ export function DashboardScreen() {
     });
   }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter, isOverdue]);
 
-  // Versão da lista: esconde done/archived em "all" se !showClosed; quando
-  // showClosed=true, traz as concluídas pro topo da lista (pra o user
-  // encontrar rápido aquela que clicou pra revisar).
+  // Versão da lista — segue 3 modos:
+  //   - statusFilter !== "all"  → só o que o filtro pediu (incluindo overdue)
+  //   - statusFilter === "all" && !showClosed → só abertas (todo+doing)
+  //   - statusFilter === "all" && showClosed  → SÓ concluídas/arquivadas
+  //     (o toggle vira filtro exclusivo: o user quer revisar quais foram
+  //     fechadas, não ver tudo misturado).
   const demandsForList = useMemo(() => {
-    if (statusFilter === "all" && !showClosed) {
-      return baseFiltered.filter((d) => d.status !== "done" && d.status !== "archived");
+    if (statusFilter !== "all") return baseFiltered;
+    if (showClosed) {
+      return baseFiltered.filter((d) => d.status === "done" || d.status === "archived");
     }
-    if (statusFilter === "all" && showClosed) {
-      // sort estável: concluídas primeiro, demais mantêm ordem natural
-      // (created_at desc do banco).
-      return [...baseFiltered].sort((a, b) => {
-        const aClosed = a.status === "done" || a.status === "archived";
-        const bClosed = b.status === "done" || b.status === "archived";
-        if (aClosed === bClosed) return 0;
-        return aClosed ? -1 : 1;
-      });
-    }
-    return baseFiltered;
+    return baseFiltered.filter((d) => d.status !== "done" && d.status !== "archived");
   }, [baseFiltered, statusFilter, showClosed]);
 
   // Versão do Kanban: usa só os filtros explícitos, sem esconder concluídas.
@@ -730,7 +730,7 @@ function FilterBar(props: {
                 : "border-tng-marine-600 text-tng-marine-300 hover:border-tng-marine-400 hover:text-tng-marine-100"
             }`}
           >
-            {props.showClosed ? "Ocultar concluídas" : "Mostrar concluídas"}
+            {props.showClosed ? "Voltar às abertas" : "Ver concluídas"}
           </button>
         )}
       </div>
@@ -812,26 +812,26 @@ const INFRASTRUCTURE_BADGE: Record<DemandInfrastructure, { label: string; cls: s
   site_ia: { label: "Site IA", cls: "bg-violet-500/15 text-violet-300" },
 };
 
-export function CardBadgesPrimary({
-  status,
+// Renderiza TODOS os badges secundários do card em uma única linha:
+// responsável + infraestrutura + anexos + comentários. O badge de status
+// saiu — agora o status é mudado via StatusButtons (botões grandes
+// dedicados no rodapé do card).
+export function CardBadges({
+  demand,
   assigneeName,
-  omitStatus = false,
 }: {
-  status: DemandStatus;
+  demand: Demand;
   assigneeName: string | null;
-  // No Kanban a coluna já indica o status — omitimos pra não duplicar.
-  omitStatus?: boolean;
 }) {
-  if (omitStatus && !assigneeName) return null;
+  const infra = demand.infrastructure ? INFRASTRUCTURE_BADGE[demand.infrastructure] : null;
+  const anything =
+    assigneeName ||
+    infra ||
+    demand.attachments_count > 0 ||
+    demand.comments_count > 0;
+  if (!anything) return null;
   return (
-    <div className="flex items-center justify-end gap-1.5">
-      {!omitStatus && (
-        <span
-          className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLE[status]}`}
-        >
-          {STATUS_LABEL[status]}
-        </span>
-      )}
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
       {assigneeName && (
         <span
           className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-100"
@@ -841,17 +841,6 @@ export function CardBadgesPrimary({
           {assigneeName}
         </span>
       )}
-    </div>
-  );
-}
-
-export function CardBadgesSecondary({ demand }: { demand: Demand }) {
-  const infra = demand.infrastructure ? INFRASTRUCTURE_BADGE[demand.infrastructure] : null;
-  const hasAnything =
-    infra || demand.attachments_count > 0 || demand.comments_count > 0;
-  if (!hasAnything) return null;
-  return (
-    <div className="flex items-center justify-end gap-1.5">
       {infra && (
         <span
           className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${infra.cls}`}
@@ -878,6 +867,77 @@ export function CardBadgesSecondary({ demand }: { demand: Demand }) {
           {demand.comments_count}
         </span>
       )}
+    </div>
+  );
+}
+
+// Trilha rápida de status — clicar atualiza direto sem abrir drawer.
+// Usado no card da lista (com filtro de "está aberta") e no header do
+// drawer (com select removido).
+const STATUS_TRACK: {
+  value: DemandStatus;
+  label: string;
+  active: string;
+  inactive: string;
+}[] = [
+  {
+    value: "todo",
+    label: "A fazer",
+    active: "bg-sky-500/20 text-sky-200 border-sky-400",
+    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-sky-400/60 hover:text-sky-200",
+  },
+  {
+    value: "doing",
+    label: "Em andamento",
+    active: "bg-tng-orange-400/20 text-tng-orange-200 border-tng-orange-400",
+    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-tng-orange-400/60 hover:text-tng-orange-200",
+  },
+  {
+    value: "done",
+    label: "Concluída",
+    active: "bg-emerald-500/20 text-emerald-200 border-emerald-400",
+    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-emerald-400/60 hover:text-emerald-200",
+  },
+];
+
+export function StatusButtons({
+  current,
+  onChange,
+  saving = false,
+  size = "sm",
+  stopPropagation = false,
+}: {
+  current: DemandStatus;
+  onChange: (s: DemandStatus) => void;
+  saving?: boolean;
+  size?: "sm" | "md";
+  // Cards da lista são clicáveis e abrem o drawer; precisamos parar o evento
+  // pra esses botões não fazerem ambas as coisas.
+  stopPropagation?: boolean;
+}) {
+  const pad = size === "sm" ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs";
+  return (
+    <div className="flex items-center gap-1">
+      {STATUS_TRACK.map((s) => {
+        const isActive = current === s.value;
+        return (
+          <button
+            key={s.value}
+            type="button"
+            disabled={saving || isActive}
+            onClick={(e) => {
+              if (stopPropagation) e.stopPropagation();
+              onChange(s.value);
+            }}
+            aria-pressed={isActive}
+            className={`rounded-md border font-medium transition disabled:cursor-default ${pad} ${
+              isActive ? s.active : s.inactive
+            }`}
+          >
+            {s.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -926,22 +986,29 @@ function DemandCard({
   const showPreview =
     previewText.length > title.length && previewText.slice(0, title.length) !== title;
 
-  // Atalho de fluxo: marcar como concluída sem precisar abrir o drawer.
-  // Estado local de saving evita duplo-click; markLocalChange (via
-  // updateDemand) suprime auto-notificação.
-  const [completing, setCompleting] = useState(false);
-  const isOpen = demand.status === "todo" || demand.status === "doing";
+  // Status fica em estado otimista local pra UX imediata quando o user
+  // clica num dos botões — sem isso, ele veria o botão "Em andamento"
+  // demorar a destacar até o realtime confirmar. wasLocalChange continua
+  // suprimindo eco de notificação.
+  const [optimisticStatus, setOptimisticStatus] = useState<DemandStatus | null>(null);
+  const [saving, setSaving] = useState(false);
+  const currentStatus = optimisticStatus ?? demand.status;
+  // Quando a prop muda (realtime confirmou), libera o estado otimista.
+  useEffect(() => {
+    if (optimisticStatus && demand.status === optimisticStatus) {
+      setOptimisticStatus(null);
+    }
+  }, [demand.status, optimisticStatus]);
 
-  async function handleComplete(e: React.MouseEvent) {
-    e.stopPropagation();
-    if (completing) return;
-    setCompleting(true);
-    const { error } = await updateDemand(demand.id, { status: "done" });
-    setCompleting(false);
+  async function handleStatus(s: DemandStatus) {
+    if (saving || s === currentStatus) return;
+    setOptimisticStatus(s);
+    setSaving(true);
+    const { error } = await updateDemand(demand.id, { status: s });
+    setSaving(false);
     if (error) {
-      // Falha rara; mostrar via alert basta — o realtime reverte qualquer
-      // estado otimista se a UI tivesse alterado antes.
-      window.alert(`Falha ao concluir: ${error}`);
+      setOptimisticStatus(null);
+      window.alert(`Falha ao atualizar status: ${error}`);
     }
   }
 
@@ -975,19 +1042,13 @@ function DemandCard({
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <CardBadgesPrimary status={demand.status} assigneeName={assigneeName} />
-          <CardBadgesSecondary demand={demand} />
-          {isOpen && (
-            <button
-              type="button"
-              onClick={handleComplete}
-              disabled={completing}
-              className="mt-1 flex items-center gap-1 rounded-md border border-emerald-500/40 px-2 py-0.5 text-[10px] font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50"
-            >
-              <i className="fa-solid fa-check text-[9px]" aria-hidden="true" />
-              {completing ? "Concluindo…" : "Marcar como concluída"}
-            </button>
-          )}
+          <CardBadges demand={demand} assigneeName={assigneeName} />
+          <StatusButtons
+            current={currentStatus}
+            onChange={handleStatus}
+            saving={saving}
+            stopPropagation
+          />
         </div>
       </div>
     </li>

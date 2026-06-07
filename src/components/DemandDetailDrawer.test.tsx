@@ -102,7 +102,7 @@ describe("DemandDetailDrawer", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("mudar status no select dispara updateDemand", async () => {
+  it("clicar em 'Em andamento' dispara updateDemand", async () => {
     const user = userEvent.setup();
     render(
       <DemandDetailDrawer
@@ -113,9 +113,9 @@ describe("DemandDetailDrawer", () => {
         onClose={() => {}}
       />,
     );
-    // O select de status é o primeiro <select> do header
-    const selects = screen.getAllByRole("combobox");
-    await user.selectOptions(selects[0], "doing");
+    // Status virou trilha de botões no header. Clicamos no "Em andamento"
+    // (que estava inativo) pra disparar a mudança.
+    await user.click(screen.getByRole("button", { name: /Em andamento/i }));
     await waitFor(() => {
       expect(vi.mocked(updateDemand)).toHaveBeenCalledWith("d1", { status: "doing" });
     });

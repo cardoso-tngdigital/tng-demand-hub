@@ -22,21 +22,14 @@ import {
 } from "../lib/demandHistory";
 import { CommentsThread } from "./CommentsThread";
 import { RichTextEditor } from "./RichTextEditor";
+import { StatusButtons } from "../screens/DashboardScreen";
 import type {
   Attachment,
   Demand,
   DemandHistoryRow,
   DemandInfrastructure,
   DemandPriority,
-  DemandStatus,
 } from "../types/database";
-
-const STATUS_OPTIONS: { value: DemandStatus; label: string }[] = [
-  { value: "todo", label: "A fazer" },
-  { value: "doing", label: "Em andamento" },
-  { value: "done", label: "Concluída" },
-  { value: "archived", label: "Arquivada" },
-];
 
 const PRIORITY_OPTIONS: { value: DemandPriority; label: string }[] = [
   { value: "baixa", label: "Baixa" },
@@ -44,13 +37,6 @@ const PRIORITY_OPTIONS: { value: DemandPriority; label: string }[] = [
   { value: "alta", label: "Alta" },
   { value: "urgente", label: "Urgente" },
 ];
-
-const STATUS_STYLE: Record<DemandStatus, string> = {
-  todo: "bg-tng-marine-600/60 text-tng-marine-100",
-  doing: "bg-tng-orange-400/15 text-tng-orange-300",
-  done: "bg-emerald-500/15 text-emerald-300",
-  archived: "bg-tng-marine-700 text-tng-marine-300",
-};
 
 const PRIORITY_DOT: Record<DemandPriority, string> = {
   baixa: "bg-tng-marine-400",
@@ -148,22 +134,37 @@ function DemandDetailBody({
     <>
       <header className="flex items-start justify-between gap-3 border-b border-tng-marine-700 px-5 py-4">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span
               className={`h-2 w-2 shrink-0 rounded-full ${PRIORITY_DOT[demand.priority]}`}
+              title={`Prioridade: ${demand.priority}`}
             />
-            <select
-              value={demand.status}
-              onChange={(e) => editor.save({ status: e.target.value as DemandStatus })}
-              disabled={editor.saving}
-              className={`rounded-full border border-transparent px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider focus:border-tng-orange-400 focus:outline-none ${STATUS_STYLE[demand.status]}`}
-            >
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value} className="bg-tng-marine-800">
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <StatusButtons
+              current={demand.status}
+              onChange={(s) => editor.save({ status: s })}
+              saving={editor.saving}
+            />
+            {/* Arquivar fica como ação secundária — não é fluxo comum. */}
+            {demand.status === "done" ? (
+              <button
+                type="button"
+                onClick={() => editor.save({ status: "archived" })}
+                disabled={editor.saving}
+                className="rounded-md border border-tng-marine-600 px-2 py-0.5 text-[10px] text-tng-marine-300 hover:border-tng-marine-400 hover:text-tng-marine-100 disabled:opacity-50"
+                title="Arquivar — some da lista; usar pra demandas antigas que não vão reabrir"
+              >
+                Arquivar
+              </button>
+            ) : demand.status === "archived" ? (
+              <button
+                type="button"
+                onClick={() => editor.save({ status: "done" })}
+                disabled={editor.saving}
+                className="rounded-md border border-tng-marine-600 px-2 py-0.5 text-[10px] text-tng-marine-300 hover:border-tng-marine-400 hover:text-tng-marine-100 disabled:opacity-50"
+              >
+                Desarquivar
+              </button>
+            ) : null}
             <SaveIndicator saving={editor.saving} error={editor.error} />
           </div>
           <h2 className="mt-2 font-sans text-base font-semibold text-tng-marine-50">
