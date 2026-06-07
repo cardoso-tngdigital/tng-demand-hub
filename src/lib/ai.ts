@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import type { DemandPriority } from "../types/database";
+import type { DemandInfrastructure, DemandPriority } from "../types/database";
 import type {
   AttachmentTextPayload,
   InlineAttachment,
@@ -14,12 +14,14 @@ export type Confianca = {
 };
 
 export type ExtractedDemand = {
+  titulo: string;
   cliente: string | null;
   responsavel: string | null;
   prioridade: DemandPriority;
   prazo: string | null;
   descricao: string;
   tags: string[];
+  infraestrutura: DemandInfrastructure | null;
   confianca: Confianca;
 };
 

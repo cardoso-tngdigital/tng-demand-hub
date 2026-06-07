@@ -91,6 +91,7 @@ type Confianca = {
 // dividiam o mesmo campo. A Edge Function faz a fusão depois — o client
 // recebe um único `descricao` como sempre.
 type RawExtraction = {
+  titulo: string;
   cliente: string | null;
   responsavel: string | null;
   prioridade: "baixa" | "media" | "alta" | "urgente";
@@ -98,16 +99,19 @@ type RawExtraction = {
   descricao_principal: string;
   descricao_anexos: string | null;
   tags: string[];
+  infraestrutura: "wordpress" | "site_ia" | null;
   confianca: Confianca;
 };
 
 type ExtractedDemand = {
+  titulo: string;
   cliente: string | null;
   responsavel: string | null;
   prioridade: "baixa" | "media" | "alta" | "urgente";
   prazo: string | null;
   descricao: string;
   tags: string[];
+  infraestrutura: "wordpress" | "site_ia" | null;
   confianca: Confianca;
 };
 
@@ -502,6 +506,11 @@ ${textualBlock}
 INSTRUÇÕES:
 
 1. Extraia os campos:
+   - titulo: SUCINTO (30 a 60 caracteres), em formato verbo + objeto. Serve
+     para identificar a demanda na lista em uma piscadela. Exemplos bons:
+     "Ajustar banner do header", "Corrigir erro 500 no checkout",
+     "Criar página de FAQ". Exemplos ruins (NÃO faça): "O cliente quer
+     que ajuste o banner...", "Pedido importante do João sobre o site".
    - cliente: nome do cliente mencionado, batendo com a lista (null se não houver).
    - responsavel: nome do membro da equipe (null se não houver atribuição clara).
    - prioridade: inferir do tom (urgente/asap → 'urgente'; importante → 'alta';
@@ -513,6 +522,11 @@ INSTRUÇÕES:
      terceira pessoa, descrevendo a tarefa. SEM mencionar anexos aqui.
    - descricao_anexos: ${attachmentsRule}
    - tags: 1 a 3 palavras-chave curtas em kebab-case.
+   - infraestrutura: classifique o tipo de stack do site mencionado. Valores
+     possíveis:
+       * 'wordpress' — captura cita WordPress, WP, plugin, tema, Elementor, etc.
+       * 'site_ia'   — captura cita IA, site gerado por IA, framer-ai, etc.
+       * null        — não há pista clara no texto.
 
 2. Confiança de 0 a 1 para cliente, responsavel, prioridade, prazo.
 
@@ -556,6 +570,7 @@ INSTRUÇÕES:
 4. Retorne APENAS JSON válido neste formato exato:
 
 {
+  "titulo": "string",
   "cliente": "string | null",
   "responsavel": "string | null",
   "prioridade": "baixa | media | alta | urgente",
@@ -563,6 +578,7 @@ INSTRUÇÕES:
   "descricao_principal": "string",
   "descricao_anexos": "string | null",
   "tags": ["string"],
+  "infraestrutura": "wordpress | site_ia | null",
   "confianca": {
     "cliente": 0.0,
     "responsavel": 0.0,
@@ -669,6 +685,9 @@ async function uploadStorageAttachmentToGemini(args: {
 }
 
 function validateRaw(e: RawExtraction): void {
+  if (typeof e.titulo !== "string" || !e.titulo.trim()) {
+    throw new Error("Campo titulo ausente ou vazio");
+  }
   if (typeof e.descricao_principal !== "string" || !e.descricao_principal.trim()) {
     throw new Error("Campo descricao_principal ausente ou vazio");
   }
@@ -681,6 +700,13 @@ function validateRaw(e: RawExtraction): void {
   }
   if (!["baixa", "media", "alta", "urgente"].includes(e.prioridade)) {
     throw new Error(`Prioridade inválida: ${e.prioridade}`);
+  }
+  if (
+    e.infraestrutura !== null &&
+    e.infraestrutura !== undefined &&
+    !["wordpress", "site_ia"].includes(e.infraestrutura)
+  ) {
+    throw new Error(`Infraestrutura inválida: ${e.infraestrutura}`);
   }
   if (!Array.isArray(e.tags)) throw new Error("Campo tags deve ser array");
   if (!e.confianca || typeof e.confianca !== "object") {
@@ -695,12 +721,14 @@ function mergeExtraction(r: RawExtraction): ExtractedDemand {
   const anexos = (r.descricao_anexos ?? "").trim();
   const descricao = anexos ? `${principal}\n\n---\n\n${anexos}` : principal;
   return {
+    titulo: r.titulo.trim(),
     cliente: r.cliente,
     responsavel: r.responsavel,
     prioridade: r.prioridade,
     prazo: r.prazo,
     descricao,
     tags: r.tags,
+    infraestrutura: r.infraestrutura,
     confianca: r.confianca,
   };
 }

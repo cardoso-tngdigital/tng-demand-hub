@@ -38,7 +38,11 @@ import {
   listActiveRules,
   type AppliedRuleEntry,
 } from "../lib/classificationRules";
-import type { ClassificationRule, DemandPriority } from "../types/database";
+import type {
+  ClassificationRule,
+  DemandInfrastructure,
+  DemandPriority,
+} from "../types/database";
 
 /**
  * Resolve um nome retornado pela IA contra a lista cadastrada — primeiro
@@ -80,20 +84,24 @@ function matchProfile(name: string | null, profiles: ProfileOption[]): string | 
 }
 
 export type ConfirmedDemand = {
+  titulo: string;
   descricao: string;
   prioridade: DemandPriority;
   prazo: string | null;
   tags: string[];
   clientId: string | null;
   assigneeId: string | null;
+  infraestrutura: DemandInfrastructure | null;
 };
 
 /** Valores iniciais já com matching nome→id e regras aplicadas. */
 type Initial = {
+  titulo: string;
   descricao: string;
   prazo: string | null;
   prioridade: DemandPriority;
   tags: string[];
+  infraestrutura: DemandInfrastructure | null;
   clientId: string | null;
   assigneeId: string | null;
   appliedRules: AppliedRuleEntry[];
@@ -291,12 +299,14 @@ export function CaptureScreen() {
 
     setExtracted(e);
     setInitial({
+      titulo: e.titulo,
       descricao: applied.descricao,
       prazo: e.prazo,
       prioridade: applied.prioridade,
       tags: applied.tags,
       clientId: applied.clientId,
       assigneeId: applied.assigneeId,
+      infraestrutura: e.infraestrutura,
       appliedRules,
     });
     setMode("confirm");
@@ -354,12 +364,15 @@ export function CaptureScreen() {
 
     const { data, error } = await createDemand({
       description: final.descricao,
-      title: final.descricao.slice(0, 80),
+      // Título gerado pela IA é o ponto de partida; usamos a primeira linha
+      // da descrição como fallback se vier vazio depois da revisão.
+      title: final.titulo.trim() || final.descricao.slice(0, 80),
       priority: final.prioridade,
       due_date: final.prazo,
       tags: final.tags,
       client_id: final.clientId,
       assignee_id: final.assigneeId,
+      infrastructure: final.infraestrutura,
       captured_via: "hotkey",
     });
 
@@ -702,8 +715,12 @@ function ConfirmView(props: {
   const [assigneeId, setAssigneeId] = useState<string>(props.initial.assigneeId ?? "");
   const [prioridade, setPrioridade] = useState<DemandPriority>(props.initial.prioridade);
   const [prazo, setPrazo] = useState(props.initial.prazo ?? "");
+  const [titulo, setTitulo] = useState(props.initial.titulo);
   const [descricao, setDescricao] = useState(props.initial.descricao);
   const [tags, setTags] = useState(props.initial.tags.join(", "));
+  const [infraestrutura, setInfraestrutura] = useState<DemandInfrastructure | "">(
+    props.initial.infraestrutura ?? "",
+  );
 
   const conf = props.extracted.confianca;
   const lowConfidence = (v: number) => v < 0.7;
@@ -719,6 +736,7 @@ function ConfirmView(props: {
 
   function handleConfirm() {
     props.onConfirm({
+      titulo: titulo.trim(),
       prioridade,
       prazo: prazo.trim() || null,
       descricao: descricao.trim(),
@@ -728,6 +746,7 @@ function ConfirmView(props: {
         .filter(Boolean),
       clientId: clientId || null,
       assigneeId: assigneeId || null,
+      infraestrutura: infraestrutura || null,
     });
   }
 
@@ -748,7 +767,7 @@ function ConfirmView(props: {
     // handleConfirm fecha sobre o estado local — recriado a cada render;
     // listamos as deps explícitas para evitar capturar valores antigos.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, assigneeId, prioridade, prazo, descricao, tags, props.onCancel]);
+  }, [clientId, assigneeId, prioridade, prazo, titulo, descricao, tags, infraestrutura, props.onCancel]);
 
   return (
     <div className="flex h-screen items-center justify-center bg-tng-marine-900 p-0">
@@ -859,6 +878,18 @@ function ConfirmView(props: {
           </Field>
 
           <div className="col-span-2">
+            <Field label="Título">
+              <input
+                value={titulo}
+                onChange={(e) => setTitulo(e.target.value)}
+                maxLength={80}
+                placeholder="Verbo + objeto, ex.: Ajustar banner do header"
+                className={fieldClass(false)}
+              />
+            </Field>
+          </div>
+
+          <div className="col-span-2">
             <Field label="Descrição">
               <textarea
                 value={descricao}
@@ -869,16 +900,28 @@ function ConfirmView(props: {
             </Field>
           </div>
 
-          <div className="col-span-2">
-            <Field label="Tags (separadas por vírgula)">
-              <input
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                placeholder="design, cliente-externo"
-                className={fieldClass(false)}
-              />
-            </Field>
-          </div>
+          <Field label="Infraestrutura">
+            <select
+              value={infraestrutura}
+              onChange={(e) =>
+                setInfraestrutura(e.target.value as DemandInfrastructure | "")
+              }
+              className={fieldClass(false)}
+            >
+              <option value="" className="bg-tng-marine-800">— Não classificada</option>
+              <option value="wordpress" className="bg-tng-marine-800">WordPress</option>
+              <option value="site_ia" className="bg-tng-marine-800">Site com IA</option>
+            </select>
+          </Field>
+
+          <Field label="Tags (separadas por vírgula)">
+            <input
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder="design, cliente-externo"
+              className={fieldClass(false)}
+            />
+          </Field>
 
           {props.attachments.length > 0 && (
             <div className="col-span-2">

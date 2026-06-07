@@ -7,6 +7,7 @@
 
 export type DemandStatus = "todo" | "doing" | "done" | "archived";
 export type DemandPriority = "baixa" | "media" | "alta" | "urgente";
+export type DemandInfrastructure = "wordpress" | "site_ia";
 export type CapturedVia = "hotkey" | "tray" | "manual";
 export type UserRole = "admin" | "member";
 export type ClientStatus = "active" | "inactive";
@@ -31,6 +32,9 @@ export interface Client {
   phone: string | null;
   status: ClientStatus;
   notes: string | null;
+  google_business_url: string | null;
+  drive_urls: string[];
+  whatsapp_group_url: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -47,6 +51,7 @@ export interface Demand {
   status: DemandStatus;
   due_date: string | null;
   tags: string[];
+  infrastructure: DemandInfrastructure | null;
   ai_confidence: Record<string, number> | null;
   ai_raw_response: unknown | null;
   ai_cost_micro: number | null;
@@ -66,7 +71,26 @@ export interface NewDemandInput {
   status?: DemandStatus;
   due_date?: string | null;
   tags?: string[];
+  infrastructure?: DemandInfrastructure | null;
   captured_via?: CapturedVia;
+}
+
+export type DemandHistoryEvent =
+  | "created"
+  | "field_changed"
+  | "comment_added"
+  | "comment_deleted"
+  | "attachment_added";
+
+export interface DemandHistoryRow {
+  id: string;
+  demand_id: string;
+  event_type: DemandHistoryEvent;
+  field: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  actor_id: string | null;
+  created_at: string;
 }
 
 export interface Attachment {

@@ -43,6 +43,7 @@ export async function createDemand(
     status: input.status ?? "todo",
     due_date: input.due_date ?? null,
     tags: input.tags ?? [],
+    infrastructure: input.infrastructure ?? null,
     captured_via: input.captured_via ?? "manual",
   };
 
@@ -70,6 +71,7 @@ export type DemandPatch = Partial<{
   status: Demand["status"];
   due_date: string | null;
   tags: string[];
+  infrastructure: Demand["infrastructure"];
 }>;
 
 /**
