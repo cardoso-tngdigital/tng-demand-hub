@@ -5,7 +5,6 @@ import {
   listComments,
   subscribeToComments,
 } from "../lib/comments";
-import { supabase } from "../lib/supabase/client";
 import {
   isHtmlEmpty,
   legacyToHtml,
@@ -15,48 +14,57 @@ import { RichTextEditor } from "./RichTextEditor";
 import type { ProfileOption } from "../lib/lookups";
 import type { Comment } from "../types/database";
 
+// Combina relativa ("agora", "5 min", "3 h", "2 d") com data absoluta curta
+// (DD/MM). Acima de 1 ano cai pra DD/MM/YY pra evitar ambiguidade quando o
+// projeto envelhecer. Sempre mostra a data — assim o user não precisa ficar
+// fazendo conta de "1d atrás" 100 dias depois.
 function formatRelative(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const date = new Date(iso);
+  const diff = Date.now() - date.getTime();
   const min = Math.floor(diff / 60000);
-  if (min < 1) return "agora";
-  if (min < 60) return `${min} min`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `${h} h`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d} d`;
-  return new Date(iso).toLocaleDateString("pt-BR");
+
+  let relative: string;
+  if (min < 1) relative = "agora";
+  else if (min < 60) relative = `${min} min`;
+  else {
+    const h = Math.floor(min / 60);
+    if (h < 24) relative = `${h} h`;
+    else relative = `${Math.floor(h / 24)} d`;
+  }
+
+  const now = new Date();
+  const sameYear = date.getFullYear() === now.getFullYear();
+  const absolute = sameYear
+    ? date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
+    : date.toLocaleDateString("pt-BR");
+
+  // "agora" não precisa repetir a data (tá acontecendo); todo o resto leva.
+  return relative === "agora" ? "agora" : `${relative} · ${absolute}`;
 }
 
 export function CommentsThread({
   demandId,
   profiles,
+  isAdmin,
 }: {
   demandId: string;
   profiles: ProfileOption[];
+  // Apenas admins podem apagar comentários. Antes qualquer autor apagava o
+  // próprio; mudamos pra centralizar a decisão de "remover histórico" na
+  // figura do admin. A RLS também é endurecida no Bloco 2.
+  isAdmin: boolean;
 }) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const profileNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const p of profiles) m.set(p.id, p.full_name);
     return m;
   }, [profiles]);
-
-  useEffect(() => {
-    let cancelled = false;
-    supabase.auth.getUser().then(({ data }) => {
-      if (cancelled) return;
-      setCurrentUserId(data.user?.id ?? null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,7 +149,7 @@ export function CommentsThread({
               key={c.id}
               comment={c}
               authorName={profileNameById.get(c.author_id) ?? "—"}
-              canDelete={c.author_id === currentUserId}
+              canDelete={isAdmin}
               onDelete={() => handleDelete(c.id)}
             />
           ))}

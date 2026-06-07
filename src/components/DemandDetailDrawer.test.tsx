@@ -66,6 +66,7 @@ describe("DemandDetailDrawer", () => {
         demand={null}
         clients={clients}
         profiles={profiles}
+        isAdmin={false}
         onClose={() => {}}
       />,
     );
@@ -78,6 +79,7 @@ describe("DemandDetailDrawer", () => {
         demand={makeDemand({ title: "Refatorar checkout" })}
         clients={clients}
         profiles={profiles}
+        isAdmin={false}
         onClose={() => {}}
       />,
     );
@@ -92,6 +94,7 @@ describe("DemandDetailDrawer", () => {
         demand={makeDemand()}
         clients={clients}
         profiles={profiles}
+        isAdmin={false}
         onClose={onClose}
       />,
     );
@@ -106,6 +109,7 @@ describe("DemandDetailDrawer", () => {
         demand={makeDemand({ id: "d1", status: "todo" })}
         clients={clients}
         profiles={profiles}
+        isAdmin={false}
         onClose={() => {}}
       />,
     );
@@ -124,6 +128,7 @@ describe("DemandDetailDrawer", () => {
         demand={makeDemand({ id: "d1", description: "<p>antes</p>" })}
         clients={clients}
         profiles={profiles}
+        isAdmin={false}
         onClose={() => {}}
       />,
     );

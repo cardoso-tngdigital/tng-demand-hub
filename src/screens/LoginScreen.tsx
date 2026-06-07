@@ -31,7 +31,7 @@ export function LoginScreen() {
             className="h-16 w-auto select-none"
             draggable={false}
           />
-          <p className="mt-4 text-sm text-tng-marine-200">Demand Hub</p>
+          <p className="mt-4 text-sm text-tng-marine-200">Sites — Demandas</p>
         </div>
 
         <form

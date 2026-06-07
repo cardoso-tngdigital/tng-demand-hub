@@ -30,7 +30,6 @@ vi.mock("../lib/comments", () => ({
 
 import { CommentsThread } from "./CommentsThread";
 import { createComment, deleteComment, listComments } from "../lib/comments";
-import { supabase } from "../lib/supabase/client";
 import { makeComment, makeProfile } from "../test/factories";
 
 const profiles = [
@@ -41,7 +40,7 @@ const profiles = [
 describe("CommentsThread", () => {
   it("mostra placeholder quando não há comentários", async () => {
     vi.mocked(listComments).mockResolvedValueOnce({ data: [], error: null });
-    render(<CommentsThread demandId="d1" profiles={profiles} />);
+    render(<CommentsThread demandId="d1" profiles={profiles} isAdmin={false} />);
     await waitFor(() =>
       expect(screen.getByText(/Nenhum comentário ainda/i)).toBeInTheDocument(),
     );
@@ -56,7 +55,7 @@ describe("CommentsThread", () => {
       error: null,
     });
 
-    render(<CommentsThread demandId="d1" profiles={profiles} />);
+    render(<CommentsThread demandId="d1" profiles={profiles} isAdmin={false} />);
 
     await waitFor(() => {
       expect(screen.getByText("tudo")).toBeInTheDocument();
@@ -67,12 +66,7 @@ describe("CommentsThread", () => {
     expect(screen.getByText("Outro")).toBeInTheDocument();
   });
 
-  it("botão remover só aparece nos próprios comentários", async () => {
-    vi.mocked(supabase.auth.getUser).mockResolvedValueOnce({
-      // @ts-expect-error mock parcial não precisa preencher tudo
-      data: { user: { id: "u1" } },
-      error: null,
-    });
+  it("non-admin não vê botão remover nem nos próprios comentários", async () => {
     vi.mocked(listComments).mockResolvedValueOnce({
       data: [
         makeComment({ id: "c1", author_id: "u1", content: "<p>meu</p>" }),
@@ -81,10 +75,27 @@ describe("CommentsThread", () => {
       error: null,
     });
 
-    render(<CommentsThread demandId="d1" profiles={profiles} />);
+    render(<CommentsThread demandId="d1" profiles={profiles} isAdmin={false} />);
 
     await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: /Remover comentário/i })).toHaveLength(1);
+      expect(screen.getByText("meu")).toBeInTheDocument();
+    });
+    expect(screen.queryAllByRole("button", { name: /Remover comentário/i })).toHaveLength(0);
+  });
+
+  it("admin vê botão remover em TODOS os comentários", async () => {
+    vi.mocked(listComments).mockResolvedValueOnce({
+      data: [
+        makeComment({ id: "c1", author_id: "u1", content: "<p>meu</p>" }),
+        makeComment({ id: "c2", author_id: "u2", content: "<p>outro</p>" }),
+      ],
+      error: null,
+    });
+
+    render(<CommentsThread demandId="d1" profiles={profiles} isAdmin={true} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /Remover comentário/i })).toHaveLength(2);
     });
   });
 
@@ -95,7 +106,7 @@ describe("CommentsThread", () => {
       error: null,
     });
     const user = userEvent.setup();
-    render(<CommentsThread demandId="d1" profiles={profiles} />);
+    render(<CommentsThread demandId="d1" profiles={profiles} isAdmin={false} />);
     await waitFor(() => expect(screen.getByText(/Nenhum comentário/i)).toBeInTheDocument());
 
     const editor = screen.getByTestId("comment-editor");
@@ -112,17 +123,12 @@ describe("CommentsThread", () => {
 
   it("botão Comentar fica desabilitado quando texto está vazio", async () => {
     vi.mocked(listComments).mockResolvedValueOnce({ data: [], error: null });
-    render(<CommentsThread demandId="d1" profiles={profiles} />);
+    render(<CommentsThread demandId="d1" profiles={profiles} isAdmin={false} />);
     await waitFor(() => expect(screen.getByText(/Nenhum comentário/i)).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Comentar/i })).toBeDisabled();
   });
 
-  it("click em remover chama deleteComment com o id certo", async () => {
-    vi.mocked(supabase.auth.getUser).mockResolvedValueOnce({
-      // @ts-expect-error mock parcial
-      data: { user: { id: "u1" } },
-      error: null,
-    });
+  it("admin clica remover e chama deleteComment com o id certo", async () => {
     vi.mocked(listComments).mockResolvedValueOnce({
       data: [makeComment({ id: "c1", author_id: "u1", content: "<p>x</p>" })],
       error: null,
@@ -130,7 +136,7 @@ describe("CommentsThread", () => {
     vi.mocked(deleteComment).mockResolvedValueOnce({ error: null });
 
     const user = userEvent.setup();
-    render(<CommentsThread demandId="d1" profiles={profiles} />);
+    render(<CommentsThread demandId="d1" profiles={profiles} isAdmin={true} />);
     const btn = await screen.findByRole("button", { name: /Remover comentário/i });
     await user.click(btn);
     expect(vi.mocked(deleteComment)).toHaveBeenCalledWith("c1");

@@ -1,5 +1,5 @@
 // =============================================================================
-// TNG Demand Hub — Tauri Core
+// TNG Sites — Demandas — Tauri Core
 // =============================================================================
 // Responsabilidades:
 // - Inicializar plugins (global-shortcut, opener).
@@ -130,7 +130,7 @@ pub fn run() {
             // -----------------------------------------------------------------
             // Tray Icon — ícone na bandeja do sistema
             // -----------------------------------------------------------------
-            let abrir_item = MenuItem::with_id(app, "open", "Abrir Demand Hub", true, None::<&str>)?;
+            let abrir_item = MenuItem::with_id(app, "open", "Abrir TNG Sites — Demandas", true, None::<&str>)?;
             let capturar_item = MenuItem::with_id(
                 app,
                 "capture",
@@ -149,7 +149,7 @@ pub fn run() {
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .icon_as_template(true)
-                .tooltip("TNG Demand Hub")
+                .tooltip("TNG Sites — Demandas")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {

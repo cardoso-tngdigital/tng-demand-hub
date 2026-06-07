@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TNG Demand Hub",
+  "productName": "TNG Sites — Demandas",
   "version": "0.1.1",
   "identifier": "digital.tng.demandhub",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "TNG Demand Hub",
+        "title": "TNG Sites — Demandas",
         "width": 1100,
         "height": 720,
         "minWidth": 900,

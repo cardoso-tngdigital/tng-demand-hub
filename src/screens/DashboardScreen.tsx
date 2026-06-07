@@ -114,14 +114,19 @@ export function DashboardScreen() {
   const [aiUsageOpen, setAiUsageOpen] = useState(false);
   const [rulesAdminOpen, setRulesAdminOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  // Nome de exibição do user atual — preferimos full_name a email no header
+  // e em qualquer outro lugar do app. Email só aparece como tooltip.
+  const [currentUserName, setCurrentUserName] = useState<string | null>(null);
 
-  // Detecta papel admin do usuário atual para liberar gestão de regras.
+  // Detecta papel admin do usuário atual para liberar gestão de regras e
+  // carrega o nome de exibição.
   useEffect(() => {
     if (!currentUserId) return;
     (async () => {
       const all = await listAllProfiles();
       const me = all.data.find((p) => p.id === currentUserId);
       setIsAdmin(me?.role === "admin");
+      setCurrentUserName(me?.full_name ?? null);
     })();
   }, [currentUserId, membersAdminOpen]);
 
@@ -341,7 +346,7 @@ export function DashboardScreen() {
       >
         <div className="flex items-center gap-3">
           <img src={logoDark} alt="TNG Digital" className="h-8 w-auto" draggable={false} />
-          <span className="text-sm text-tng-marine-200">Demand Hub</span>
+          <span className="text-sm text-tng-marine-200">Sites — Demandas</span>
           <span
             className={`ml-3 flex items-center gap-1.5 text-[10px] uppercase tracking-wider ${
               realtimeConnected ? "text-emerald-400" : "text-tng-marine-300"
@@ -390,7 +395,12 @@ export function DashboardScreen() {
           >
             Regras
           </button>
-          <span className="text-xs text-tng-marine-300">{user?.email}</span>
+          <span
+            className="text-xs text-tng-marine-300"
+            title={user?.email ?? undefined}
+          >
+            {currentUserName ?? user?.email}
+          </span>
           <button
             onClick={signOut}
             className="rounded-md border border-tng-marine-600 px-3 py-1.5 text-xs text-tng-marine-100 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
@@ -468,6 +478,7 @@ export function DashboardScreen() {
         demand={selectedDemand}
         clients={clients}
         profiles={profiles}
+        isAdmin={isAdmin}
         onClose={() => setSelectedDemandId(null)}
       />
 

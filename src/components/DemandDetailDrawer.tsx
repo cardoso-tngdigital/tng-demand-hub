@@ -56,11 +56,15 @@ export function DemandDetailDrawer({
   demand,
   clients,
   profiles,
+  isAdmin,
   onClose,
 }: {
   demand: Demand | null;
   clients: ClientOption[];
   profiles: ProfileOption[];
+  // Propagado pra dentro: comments-thread usa pra esconder o botão "remover"
+  // pra non-admins; futuramente o histórico também só aparece pra admin.
+  isAdmin: boolean;
   onClose: () => void;
 }) {
   const open = demand !== null;
@@ -98,6 +102,7 @@ export function DemandDetailDrawer({
             demand={demand}
             clients={clients}
             profiles={profiles}
+            isAdmin={isAdmin}
             onClose={onClose}
           />
         )}
@@ -110,11 +115,13 @@ function DemandDetailBody({
   demand,
   clients,
   profiles,
+  isAdmin,
   onClose,
 }: {
   demand: Demand;
   clients: ClientOption[];
   profiles: ProfileOption[];
+  isAdmin: boolean;
   onClose: () => void;
 }) {
   const editor = useDemandEditor(demand);
@@ -234,7 +241,7 @@ function DemandDetailBody({
         </Section>
 
         <Section title="Comentários">
-          <CommentsThread demandId={demand.id} profiles={profiles} />
+          <CommentsThread demandId={demand.id} profiles={profiles} isAdmin={isAdmin} />
         </Section>
 
         <Section title="Metadados">

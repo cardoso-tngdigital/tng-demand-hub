@@ -76,6 +76,19 @@
   [data-tauri-drag-region] a {
     -webkit-app-region: no-drag;
   }
+
+  /* Cursor pointer em qualquer coisa clicável que não esteja desabilitada.
+     O preflight do Tailwind 4 zera o cursor de buttons; restauramos aqui pra
+     UX padrão de app desktop sem precisar repetir `cursor-pointer` por todo
+     componente. Disabled e aria-disabled mantêm cursor default. */
+  button:not(:disabled):not([aria-disabled="true"]),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  label[for],
+  summary,
+  select:not(:disabled) {
+    cursor: pointer;
+  }
 }
 
 /* =============================================================================
