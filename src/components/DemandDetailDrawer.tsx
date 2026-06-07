@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { supabase } from "../lib/supabase/client";
 import { updateDemand, type DemandPatch } from "../lib/demands";
 import type { ClientOption, ProfileOption } from "../lib/lookups";
 import {
+  buildPendingAttachment,
   categoryIcon,
   categorize,
+  disposePending,
   formatBytes,
   getSignedUrl,
   listAttachments,
+  pickFilesNative,
+  uploadAttachment,
 } from "../lib/attachments";
 import { htmlToPlainText, legacyToHtml, sanitizeHtml } from "../lib/htmlContent";
 import {
@@ -647,6 +652,10 @@ function AttachmentsList({ demandId }: { demandId: string }) {
   const [items, setItems] = useState<Attachment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<Attachment | null>(null);
+  const [uploading, setUploading] = useState(false);
+  // Mensagens de erro por arquivo durante upload — mostradas inline e
+  // limpas no próximo clique em "Anexar".
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -663,28 +672,82 @@ function AttachmentsList({ demandId }: { demandId: string }) {
     };
   }, [demandId]);
 
-  if (items === null && error === null) {
-    return <p className="text-xs text-tng-marine-400">Carregando…</p>;
-  }
-  if (error) {
-    return <p className="text-xs text-red-300">{error}</p>;
-  }
-  if (items && items.length === 0) {
-    return <p className="text-xs text-tng-marine-400">Sem anexos.</p>;
-  }
+  // Sobe N arquivos em sequência. Cada upload bem sucedido é empurrado na
+  // lista já visível (otimista); falhas viram strings em uploadErrors.
+  const handlePick = useCallback(async () => {
+    setUploadErrors([]);
+    const picked = await pickFilesNative();
+    if (picked.errors.length > 0) {
+      setUploadErrors((prev) => [...prev, ...picked.errors]);
+    }
+    if (picked.files.length === 0) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setUploadErrors((prev) => [...prev, "Sessão expirada. Faça login novamente."]);
+      return;
+    }
+
+    setUploading(true);
+    for (const file of picked.files) {
+      const built = await buildPendingAttachment(file);
+      if ("error" in built) {
+        setUploadErrors((prev) => [...prev, `${file.name}: ${built.error}`]);
+        continue;
+      }
+      const result = await uploadAttachment(built, demandId, user.id);
+      disposePending(built);
+      if (result.ok) {
+        setItems((prev) => (prev ? [...prev, result.attachment] : [result.attachment]));
+      } else {
+        setUploadErrors((prev) => [...prev, `${file.name}: ${result.error}`]);
+      }
+    }
+    setUploading(false);
+  }, [demandId]);
+
   return (
-    <>
-      <ul className="space-y-1.5">
-        {items!.map((a) => (
-          <AttachmentItem
-            key={a.id}
-            attachment={a}
-            onOpen={() => setViewing(a)}
-          />
-        ))}
-      </ul>
+    <div className="space-y-2">
+      {items === null && error === null ? (
+        <p className="text-xs text-tng-marine-400">Carregando…</p>
+      ) : error ? (
+        <p className="text-xs text-red-300">{error}</p>
+      ) : items && items.length === 0 ? (
+        <p className="text-xs text-tng-marine-400">Sem anexos.</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {items!.map((a) => (
+            <AttachmentItem
+              key={a.id}
+              attachment={a}
+              onOpen={() => setViewing(a)}
+            />
+          ))}
+        </ul>
+      )}
+
+      <button
+        type="button"
+        onClick={() => void handlePick()}
+        disabled={uploading}
+        className="rounded-md border border-dashed border-tng-marine-600 px-2.5 py-1.5 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-300 disabled:opacity-60"
+      >
+        {uploading ? "Enviando…" : "+ Anexar arquivo"}
+      </button>
+      <p className="text-[10px] text-tng-marine-400">Máx. 50 MB por arquivo.</p>
+
+      {uploadErrors.length > 0 && (
+        <ul className="space-y-0.5 text-[11px] text-red-300">
+          {uploadErrors.map((m, i) => (
+            <li key={i}>{m}</li>
+          ))}
+        </ul>
+      )}
+
       <AttachmentViewer attachment={viewing} onClose={() => setViewing(null)} />
-    </>
+    </div>
   );
 }
 
