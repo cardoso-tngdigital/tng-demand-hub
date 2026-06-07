@@ -20,9 +20,9 @@ export default defineConfig({
     // Detecta .test.ts e .test.tsx co-localizados (preferimos arquivos de
     // teste ao lado do código fonte em vez de pasta __tests__).
     include: ["src/**/*.test.{ts,tsx}"],
-    // Sem watch implícito ao chamar `vitest run`. O script npm test usa watch
-    // por padrão, e o test:ci usa run-once.
-    watch: false,
+    // Sem `watch: false` aqui — o Vitest decide pelo subcomando: `vitest`
+    // entra em watch, `vitest run` é one-shot. Forçar `false` no config
+    // anulava o watch do `npm test`.
     css: false,
     // Restore mocks entre testes pra isolar comportamento.
     restoreMocks: true,
