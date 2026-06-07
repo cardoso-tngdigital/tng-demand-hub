@@ -90,7 +90,9 @@ export function categorize(mime: string): AttachmentCategory {
 export function resolveMime(file: File): string {
   if (file.type && ALLOWED_MIME_TYPES.has(file.type)) return file.type;
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  return EXTENSION_FALLBACK[ext] ?? file.type ?? "application/octet-stream";
+  // `||` em vez de `??` — file.type pode vir como string vazia (clipboard),
+  // e nesses casos queremos cair pro octet-stream em vez de devolver "".
+  return EXTENSION_FALLBACK[ext] || file.type || "application/octet-stream";
 }
 
 export type ValidationResult = { ok: true; mime: string } | { ok: false; error: string };

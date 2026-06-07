@@ -134,11 +134,60 @@ npm run tauri build        # Build do app desktop (DMG / MSI)
 # TypeScript
 npx tsc --noEmit           # Checagem de tipos sem gerar arquivos
 
+# Testes
+npm test                   # Vitest em watch mode (deixar aberto enquanto edita)
+npm run test:run           # Roda toda a suíte uma vez (usado no CI)
+
 # Supabase (CLI local)
 supabase migration new <nome>      # Cria nova migração vazia
 supabase db push                    # Aplica migrações no projeto remoto (após link)
 supabase link --project-ref rczvkarulymulmkxolez   # Linka ao projeto remoto
 ```
+
+## Testes
+
+### Stack
+
+- **Vitest 4** + jsdom + Testing Library (React + jest-dom)
+- Co-localização: `foo.ts` → `foo.test.ts` no mesmo diretório. Sem pasta
+  `__tests__/`.
+- Setup global em `src/test/setup.ts`: registra matchers, limpa o DOM
+  entre testes e injeta mocks padrão pro cliente Supabase e plugins do
+  Tauri (cada teste sobrescreve com `vi.mocked(...)` quando precisa de
+  comportamento específico).
+- Factories de domínio em `src/test/factories.ts`
+  (`makeDemand`, `makeClient`, `makeProfile`, `makeComment`).
+
+### Mocks de componentes pesados
+
+- **`RichTextEditor` (Tiptap)**: testes do `DemandDetailDrawer` e
+  `CommentsThread` o substituem por um `<textarea>` simples via
+  `vi.mock("./RichTextEditor", ...)`. O contrato testado é
+  `value/onChange(html)/onBlur` — não a renderização do editor.
+- **`CommentsThread`** dentro do drawer também é stubado pra isolar a
+  superfície sob teste.
+
+### CI
+
+`.github/workflows/test.yml` roda em todo push em `main` e PRs:
+
+1. `actions/setup-node@v4` (node 20, cache npm)
+2. `npm ci`
+3. `npx tsc --noEmit`
+4. `npm run test:run`
+
+Se vermelho, o PR/push aparece com ❌ no GitHub. Não bloqueia merge por
+padrão — para ativar, configurar branch protection em main → "Require
+status checks to pass before merging" → marcar `Type-check + Vitest`.
+
+### Convenção de prompt no Vitest
+
+- Teste de regressão: `describe(funçãoTestada, ...)` com `it("...")` em
+  pt-BR descrevendo expectativa. Ex.: `it("expira após o TTL", ...)`.
+- Use `vi.fn()` pra contratos de callback (`onClose`, `onSelect`); cheque
+  com `expect(spy).toHaveBeenCalledWith(...)`.
+- Para datas: `vi.useFakeTimers() + vi.setSystemTime(...)`. Sempre
+  restaurar com `vi.useRealTimers()` em `beforeEach` ou após.
 
 ## Configuração do Supabase remoto
 
