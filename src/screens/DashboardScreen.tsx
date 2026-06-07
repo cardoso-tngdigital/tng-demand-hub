@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { listDemands, subscribeToDemands } from "../lib/demands";
+import { listDemands, subscribeToDemands, updateDemand } from "../lib/demands";
 import { subscribeToAllCommentInserts } from "../lib/comments";
 import {
   ensureNotificationPermission,
@@ -301,21 +301,20 @@ export function DashboardScreen() {
     return d.due_date < new Date().toISOString().slice(0, 10);
   }, []);
 
-  // Mostra demandas concluídas e arquivadas. Por padrão a lista esconde
-  // (foco no que está em aberto), mas o user pode reativar via toggle pra
-  // revisar histórico ou re-abrir.
+  // Mostra demandas concluídas e arquivadas NA LISTA. Por padrão a lista
+  // esconde (foco no que está em aberto). No Kanban as colunas done /
+  // archived ficam visíveis sempre — o Kanban é a visão de fluxo completo.
   const [showClosed, setShowClosed] = useState(false);
 
-  const filteredDemands = useMemo(() => {
+  // Filtro base — comum à lista e ao Kanban. Inclui status filter explícito
+  // (todo/doing/overdue) mas não a regra de "esconder concluídas em all":
+  // essa é exclusiva da lista.
+  const baseFiltered = useMemo(() => {
     return demands.filter((d) => {
       if (statusFilter === "overdue") {
         if (!isOverdue(d)) return false;
       } else if (statusFilter !== "all" && d.status !== statusFilter) {
         return false;
-      } else if (statusFilter === "all" && !showClosed) {
-        // Lista padrão = apenas abertas. Done/archived só aparecem com
-        // toggle ativo ou quando o user filtra explicitamente por elas.
-        if (d.status === "done" || d.status === "archived") return false;
       }
       if (priorityFilter !== "all" && d.priority !== priorityFilter) return false;
       if (clientFilter === "none" && d.client_id !== null) return false;
@@ -324,7 +323,30 @@ export function DashboardScreen() {
       if (assigneeFilter !== "all" && assigneeFilter !== "none" && d.assignee_id !== assigneeFilter) return false;
       return true;
     });
-  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter, isOverdue, showClosed]);
+  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter, isOverdue]);
+
+  // Versão da lista: esconde done/archived em "all" se !showClosed; quando
+  // showClosed=true, traz as concluídas pro topo da lista (pra o user
+  // encontrar rápido aquela que clicou pra revisar).
+  const demandsForList = useMemo(() => {
+    if (statusFilter === "all" && !showClosed) {
+      return baseFiltered.filter((d) => d.status !== "done" && d.status !== "archived");
+    }
+    if (statusFilter === "all" && showClosed) {
+      // sort estável: concluídas primeiro, demais mantêm ordem natural
+      // (created_at desc do banco).
+      return [...baseFiltered].sort((a, b) => {
+        const aClosed = a.status === "done" || a.status === "archived";
+        const bClosed = b.status === "done" || b.status === "archived";
+        if (aClosed === bClosed) return 0;
+        return aClosed ? -1 : 1;
+      });
+    }
+    return baseFiltered;
+  }, [baseFiltered, statusFilter, showClosed]);
+
+  // Versão do Kanban: usa só os filtros explícitos, sem esconder concluídas.
+  const kanbanDemands = baseFiltered;
 
   const filtersActive =
     statusFilter !== "all" ||
@@ -495,11 +517,11 @@ export function DashboardScreen() {
         ) : demands.length === 0 ? (
           <EmptyState />
         ) : viewMode === "list" ? (
-          filteredDemands.length === 0 ? (
+          demandsForList.length === 0 ? (
             <FilteredEmptyState onClear={clearFilters} />
           ) : (
             <ul className="space-y-2">
-              {filteredDemands.map((demand) => (
+              {demandsForList.map((demand) => (
                 <DemandCard
                   key={demand.id}
                   demand={demand}
@@ -513,7 +535,7 @@ export function DashboardScreen() {
           )
         ) : (
           <KanbanBoard
-            demands={filteredDemands}
+            demands={kanbanDemands}
             profileNameById={profileNameById}
             onSelectDemand={setSelectedDemandId}
           />
@@ -904,6 +926,25 @@ function DemandCard({
   const showPreview =
     previewText.length > title.length && previewText.slice(0, title.length) !== title;
 
+  // Atalho de fluxo: marcar como concluída sem precisar abrir o drawer.
+  // Estado local de saving evita duplo-click; markLocalChange (via
+  // updateDemand) suprime auto-notificação.
+  const [completing, setCompleting] = useState(false);
+  const isOpen = demand.status === "todo" || demand.status === "doing";
+
+  async function handleComplete(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (completing) return;
+    setCompleting(true);
+    const { error } = await updateDemand(demand.id, { status: "done" });
+    setCompleting(false);
+    if (error) {
+      // Falha rara; mostrar via alert basta — o realtime reverte qualquer
+      // estado otimista se a UI tivesse alterado antes.
+      window.alert(`Falha ao concluir: ${error}`);
+    }
+  }
+
   return (
     <li
       onClick={onSelect}
@@ -936,6 +977,17 @@ function DemandCard({
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <CardBadgesPrimary status={demand.status} assigneeName={assigneeName} />
           <CardBadgesSecondary demand={demand} />
+          {isOpen && (
+            <button
+              type="button"
+              onClick={handleComplete}
+              disabled={completing}
+              className="mt-1 flex items-center gap-1 rounded-md border border-emerald-500/40 px-2 py-0.5 text-[10px] font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50"
+            >
+              <i className="fa-solid fa-check text-[9px]" aria-hidden="true" />
+              {completing ? "Concluindo…" : "Marcar como concluída"}
+            </button>
+          )}
         </div>
       </div>
     </li>
