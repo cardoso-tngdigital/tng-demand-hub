@@ -8,6 +8,10 @@ export type ClientInput = {
   phone?: string | null;
   notes?: string | null;
   status?: ClientStatus;
+  google_business_url?: string | null;
+  // Lista limpa de URLs do Drive (sem vazios). O ClientsAdmin filtra antes.
+  drive_urls?: string[];
+  whatsapp_group_url?: string | null;
 };
 
 export type ClientPatch = Partial<ClientInput>;
@@ -42,6 +46,9 @@ export async function createClient(
     phone: input.phone?.trim() || null,
     notes: input.notes?.trim() || null,
     status: input.status ?? "active",
+    google_business_url: input.google_business_url?.trim() || null,
+    drive_urls: cleanUrlArray(input.drive_urls),
+    whatsapp_group_url: input.whatsapp_group_url?.trim() || null,
     created_by: user?.id ?? null,
   };
 
@@ -72,6 +79,15 @@ export async function updateClient(
   if (patch.phone !== undefined) payload.phone = patch.phone?.trim() || null;
   if (patch.notes !== undefined) payload.notes = patch.notes?.trim() || null;
   if (patch.status !== undefined) payload.status = patch.status;
+  if (patch.google_business_url !== undefined) {
+    payload.google_business_url = patch.google_business_url?.trim() || null;
+  }
+  if (patch.drive_urls !== undefined) {
+    payload.drive_urls = cleanUrlArray(patch.drive_urls);
+  }
+  if (patch.whatsapp_group_url !== undefined) {
+    payload.whatsapp_group_url = patch.whatsapp_group_url?.trim() || null;
+  }
 
   if (Object.keys(payload).length === 0) {
     return { data: null, error: "Nada para atualizar." };
@@ -88,6 +104,21 @@ export async function updateClient(
     return { data: null, error: error.message };
   }
   return { data: data as Client, error: null };
+}
+
+// Normaliza arrays de URLs: trim + remove vazios + dedup. Postgres aceita
+// text[] vazio, então passar [] em vez de null mantém o tipo consistente.
+function cleanUrlArray(input: string[] | undefined): string[] {
+  if (!input) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    const trimmed = raw.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 export async function deleteClient(id: string): Promise<{ error: string | null }> {

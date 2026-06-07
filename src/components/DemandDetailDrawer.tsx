@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { updateDemand, type DemandPatch } from "../lib/demands";
 import type { ClientOption, ProfileOption } from "../lib/lookups";
 import {
@@ -9,9 +10,20 @@ import {
   listAttachments,
 } from "../lib/attachments";
 import { htmlToPlainText, legacyToHtml, sanitizeHtml } from "../lib/htmlContent";
+import {
+  describeEvent,
+  formatHistoryDate,
+  listHistory,
+} from "../lib/demandHistory";
 import { CommentsThread } from "./CommentsThread";
 import { RichTextEditor } from "./RichTextEditor";
-import type { Attachment, Demand, DemandPriority, DemandStatus } from "../types/database";
+import type {
+  Attachment,
+  Demand,
+  DemandHistoryRow,
+  DemandPriority,
+  DemandStatus,
+} from "../types/database";
 
 const STATUS_OPTIONS: { value: DemandStatus; label: string }[] = [
   { value: "todo", label: "A fazer" },
@@ -236,6 +248,8 @@ function DemandDetailBody({
           />
         </Section>
 
+        <ClientLinks clients={clients} clientId={demand.client_id} />
+
         <Section title="Anexos">
           <AttachmentsList demandId={demand.id} />
         </Section>
@@ -254,8 +268,221 @@ function DemandDetailBody({
             <dd className="text-tng-marine-100">{demand.captured_via}</dd>
           </dl>
         </Section>
+
+        {isAdmin && (
+          <Section title="Histórico (admin)">
+            <HistoryList
+              demandId={demand.id}
+              clients={clients}
+              profiles={profiles}
+            />
+          </Section>
+        )}
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Links rápidos do cliente — só aparece quando a demanda tem client_id
+// ---------------------------------------------------------------------------
+
+function ClientLinks({
+  clients,
+  clientId,
+}: {
+  clients: ClientOption[];
+  clientId: string | null;
+}) {
+  const client = clientId ? clients.find((c) => c.id === clientId) : null;
+  if (!client) return null;
+
+  const links: { label: string; href: string; icon: string }[] = [];
+  if (client.google_business_url) {
+    links.push({
+      label: "Google Meu Negócio",
+      href: client.google_business_url,
+      icon: "🏪",
+    });
+  }
+  if (client.whatsapp_group_url) {
+    links.push({
+      label: "Grupo no WhatsApp",
+      href: client.whatsapp_group_url,
+      icon: "💬",
+    });
+  }
+  for (let i = 0; i < client.drive_urls.length; i++) {
+    links.push({
+      label: client.drive_urls.length > 1 ? `Drive ${i + 1}` : "Google Drive",
+      href: client.drive_urls[i],
+      icon: "📁",
+    });
+  }
+  if (links.length === 0) return null;
+
+  async function open(href: string) {
+    try {
+      await openUrl(href);
+    } catch (err) {
+      console.error("[ClientLinks] openUrl falhou:", err);
+    }
+  }
+
+  return (
+    <Section title={`Links de ${client.alias || client.name}`}>
+      <ul className="flex flex-wrap gap-1.5">
+        {links.map((l, idx) => (
+          <li key={`${l.label}-${idx}`}>
+            <button
+              type="button"
+              onClick={() => void open(l.href)}
+              title={l.href}
+              className="flex items-center gap-1.5 rounded-md border border-tng-marine-600 bg-tng-marine-800/60 px-2 py-1 text-[11px] text-tng-marine-100 transition hover:border-tng-orange-400 hover:text-tng-orange-300"
+            >
+              <span>{l.icon}</span>
+              <span>{l.label}</span>
+              <span className="text-tng-marine-400">↗</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Histórico (admin) — Top 5 + Ver mais
+// ---------------------------------------------------------------------------
+
+const HISTORY_PREVIEW = 5;
+
+function HistoryList({
+  demandId,
+  clients,
+  profiles,
+}: {
+  demandId: string;
+  clients: ClientOption[];
+  profiles: ProfileOption[];
+}) {
+  const [rows, setRows] = useState<DemandHistoryRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  const clientNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of clients) m.set(c.id, c.alias || c.name);
+    return m;
+  }, [clients]);
+
+  const profileNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of profiles) m.set(p.id, p.full_name);
+    return m;
+  }, [profiles]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null);
+    setError(null);
+    setExpanded(false);
+    (async () => {
+      const { data, error } = await listHistory(demandId);
+      if (cancelled) return;
+      if (error) setError(error);
+      else setRows(data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [demandId]);
+
+  if (rows === null && error === null) {
+    return <p className="text-xs text-tng-marine-400">Carregando…</p>;
+  }
+  if (error) {
+    return <p className="text-xs text-red-300">{error}</p>;
+  }
+  if (rows && rows.length === 0) {
+    return <p className="text-xs text-tng-marine-400">Sem registros ainda.</p>;
+  }
+
+  const visible = expanded ? rows! : rows!.slice(0, HISTORY_PREVIEW);
+  const hidden = rows!.length - visible.length;
+
+  return (
+    <div className="space-y-1.5">
+      <ul className="space-y-1">
+        {visible.map((r) => (
+          <HistoryRow
+            key={r.id}
+            row={r}
+            actorName={
+              r.actor_id ? profileNameById.get(r.actor_id) ?? "alguém" : "sistema"
+            }
+            ctx={{
+              oldClientName:
+                r.field === "client_id" && r.old_value
+                  ? clientNameById.get(r.old_value)
+                  : undefined,
+              newClientName:
+                r.field === "client_id" && r.new_value
+                  ? clientNameById.get(r.new_value)
+                  : undefined,
+              oldProfileName:
+                r.field === "assignee_id" && r.old_value
+                  ? profileNameById.get(r.old_value)
+                  : undefined,
+              newProfileName:
+                r.field === "assignee_id" && r.new_value
+                  ? profileNameById.get(r.new_value)
+                  : undefined,
+            }}
+          />
+        ))}
+      </ul>
+      {hidden > 0 && !expanded && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="text-[11px] text-tng-orange-300 hover:text-tng-orange-200"
+        >
+          Ver mais {hidden} registro{hidden === 1 ? "" : "s"}
+        </button>
+      )}
+      {expanded && rows!.length > HISTORY_PREVIEW && (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="text-[11px] text-tng-marine-300 hover:text-tng-marine-100"
+        >
+          Mostrar menos
+        </button>
+      )}
+    </div>
+  );
+}
+
+function HistoryRow({
+  row,
+  actorName,
+  ctx,
+}: {
+  row: DemandHistoryRow;
+  actorName: string;
+  ctx: Parameters<typeof describeEvent>[1];
+}) {
+  return (
+    <li className="rounded-md bg-tng-marine-800/40 px-3 py-1.5 text-[11px]">
+      <div className="flex items-baseline gap-2">
+        <span className="font-medium text-tng-marine-100">{actorName}</span>
+        <span className="text-tng-marine-200">{describeEvent(row, ctx)}</span>
+      </div>
+      <p className="mt-0.5 text-[10px] text-tng-marine-400">
+        {formatHistoryDate(row.created_at)}
+      </p>
+    </li>
   );
 }
 

@@ -255,7 +255,34 @@ function ClientForm({
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [googleBusinessUrl, setGoogleBusinessUrl] = useState(
+    initial?.google_business_url ?? "",
+  );
+  // Lista dinâmica do Drive — sempre garante 1 input visível pra digitar.
+  // Quando salvamos, vazios são limpos no lib/clients.ts.
+  const [driveUrls, setDriveUrls] = useState<string[]>(
+    initial?.drive_urls && initial.drive_urls.length > 0 ? initial.drive_urls : [""],
+  );
+  const [whatsappGroupUrl, setWhatsappGroupUrl] = useState(
+    initial?.whatsapp_group_url ?? "",
+  );
   const [submitting, setSubmitting] = useState(false);
+
+  function updateDriveUrl(idx: number, value: string) {
+    setDriveUrls((prev) => prev.map((u, i) => (i === idx ? value : u)));
+  }
+
+  function addDriveUrl() {
+    setDriveUrls((prev) => [...prev, ""]);
+  }
+
+  function removeDriveUrl(idx: number) {
+    setDriveUrls((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      // Mantém ao menos 1 campo vazio pra UX previsível.
+      return next.length === 0 ? [""] : next;
+    });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -267,6 +294,9 @@ function ClientForm({
       email: email || null,
       phone: phone || null,
       notes: notes || null,
+      google_business_url: googleBusinessUrl || null,
+      drive_urls: driveUrls,
+      whatsapp_group_url: whatsappGroupUrl || null,
     });
     setSubmitting(false);
   }
@@ -309,6 +339,61 @@ function ClientForm({
           />
         </Field>
       </div>
+
+      <div className="col-span-2 grid grid-cols-2 gap-3 border-t border-tng-marine-700 pt-3">
+        <Field label="Google Meu Negócio">
+          <input
+            type="url"
+            placeholder="https://g.page/…"
+            value={googleBusinessUrl}
+            onChange={(e) => setGoogleBusinessUrl(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Grupo do WhatsApp">
+          <input
+            type="url"
+            placeholder="https://chat.whatsapp.com/…"
+            value={whatsappGroupUrl}
+            onChange={(e) => setWhatsappGroupUrl(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <div className="col-span-2">
+          <Field label="Links do Google Drive">
+            <div className="space-y-1.5">
+              {driveUrls.map((url, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <input
+                    type="url"
+                    placeholder="https://drive.google.com/…"
+                    value={url}
+                    onChange={(e) => updateDriveUrl(idx, e.target.value)}
+                    className={`${inputClass} flex-1`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeDriveUrl(idx)}
+                    disabled={driveUrls.length === 1 && url === ""}
+                    aria-label="Remover link"
+                    className="shrink-0 rounded-md border border-tng-marine-600 px-2 py-1 text-[10px] text-tng-marine-300 hover:border-red-400 hover:text-red-300 disabled:opacity-30"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addDriveUrl}
+                className="text-[11px] text-tng-orange-300 hover:text-tng-orange-200"
+              >
+                + adicionar mais um link
+              </button>
+            </div>
+          </Field>
+        </div>
+      </div>
+
       <div className="col-span-2 flex items-center justify-end gap-2">
         <button
           type="button"
