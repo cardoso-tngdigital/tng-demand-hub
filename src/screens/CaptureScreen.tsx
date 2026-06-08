@@ -686,8 +686,13 @@ function InputView(props: {
   }
 
   function handleDragOver(e: DragEvent<HTMLDivElement>) {
-    if (e.dataTransfer.types.includes("Files")) {
-      e.preventDefault();
+    // Sempre chama preventDefault — sem isso o browser/webview não dispara
+    // o evento drop. Em alguns ambientes Tauri+macOS o `dataTransfer.types`
+    // chega vazio no dragover (race do webview), então o gate por "Files"
+    // antigo barrava o drop legítimo. Mostramos a UI quando dá pra
+    // identificar files, mas a prevenção é incondicional.
+    e.preventDefault();
+    if (e.dataTransfer.types.includes("Files") || e.dataTransfer.items?.length) {
       setDragOver(true);
     }
   }

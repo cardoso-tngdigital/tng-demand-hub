@@ -530,11 +530,24 @@ INSTRUÇÕES:
    localizar a demanda alvo depois.
 
 2. Extraia os campos:
-   - titulo: SUCINTO (30 a 60 caracteres), em formato verbo + objeto. Serve
-     para identificar a demanda na lista em uma piscadela. Exemplos bons:
-     "Ajustar banner do header", "Corrigir erro 500 no checkout",
-     "Criar página de FAQ". Exemplos ruins (NÃO faça): "O cliente quer
-     que ajuste o banner...", "Pedido importante do João sobre o site".
+   - titulo: SUCINTO (30 a 60 caracteres), em formato "verbo + objeto +
+     cliente" quando houver cliente conhecido — o nome do cliente faz parte
+     do título porque o time precisa identificar de quem é a demanda numa
+     piscadela. Exemplos bons:
+       * "Ajustar banner do header da Acme"
+       * "Criar página de FAQ para Bruning Homes"
+       * "Corrigir erro 500 no checkout da TNG"
+     Exemplos ruins (NÃO faça): "O cliente quer que ajuste o banner...",
+     "Pedido importante do João sobre o site".
+
+     IMPORTANTE pro fluxo de edição/comentário: quando intencao for
+     "editar" ou "comentar", o título DEVE refletir a DEMANDA ALVO
+     (o que ela faz no negócio), NÃO a operação solicitada agora.
+     Errado em edição: "Atualizar prazo da demanda X" (descreve a ação).
+     Certo: "Páginas de serviço para Cliente X" (descreve a demanda).
+     O frontend ignora alterações de título em edit/comment, mas o
+     campo precisa estar preenchido com algo coerente pra ajudar a IA
+     a encontrar a demanda alvo.
    - cliente: nome do cliente mencionado, batendo com a lista (null se não houver).
    - responsavel: nome do membro da equipe (null se não houver atribuição clara).
    - prioridade: inferir do tom. Use os exemplos abaixo como referência —
@@ -576,26 +589,86 @@ INSTRUÇÕES:
 
 4. EXEMPLOS DE INTENÇÃO (capturas reais; siga o mesmo padrão):
 
-   ─ "criar" ─
-   Texto:  "Pedro, precisa criar uma landing pra Acme até sexta. É urgente."
+   ─ "criar" (3 exemplos) ─
+
+   [A] Texto: "Pedro, precisa criar uma landing pra Acme até sexta. É urgente."
    intencao: "criar"  (não há referência a demanda existente)
    titulo:    "Criar landing page da Acme"
    prioridade: "urgente"
    prazo:     próxima sexta a partir de ${args.isoDate}
+   tags:      ["landing-page"]
 
-   ─ "editar" ─
-   Texto:  "A demanda das páginas de serviço da Acme agora tem prazo de
-            5 dias e é urgente. Cliente cobrou."
+   [B] Texto: "Adicionar páginas de cidades para Bruning Homes, prazo 10 dias."
+   intencao: "criar"  (nova demanda; verbo de criação implícito)
+   titulo:    "Adicionar páginas de cidades para Bruning Homes"
+   prioridade: "media"
+   prazo:     ${args.isoDate} + 10 dias
+   tags:      ["paginas-cidades", "seo"]
+
+   [C] Texto: "Bug no formulário de contato do site da TNG, urgente"
+   intencao: "criar"
+   titulo:    "Corrigir formulário de contato da TNG"
+   prioridade: "urgente"
+   tags:      ["bug", "formulario"]
+
+   ─ "editar" (3 exemplos) ─
+
+   [A] Texto: "A demanda das páginas de serviço da Acme agora tem prazo de
+              5 dias e é urgente. Cliente cobrou."
    intencao: "editar"  (refere "A demanda ... agora tem...")
-   titulo:    "Atualizar páginas de serviço da Acme"
+   titulo:    "Páginas de serviço da Acme"   ← demanda alvo, NÃO a operação
    prazo:     ${args.isoDate} + 5 dias
    prioridade: "urgente"
+   tags:      []                              ← não propor tags em edit
 
-   ─ "comentar" ─
-   Texto:  "Sobre a demanda de páginas da Acme, já fiz 2 de 10 páginas hoje."
+   [B] Texto: "Muda a prioridade do banner da Bruning pra alta"
+   intencao: "editar"
+   titulo:    "Banner da Bruning Homes"
+   prioridade: "alta"
+   prazo:     null
+   tags:      []
+
+   [C] Texto: "O Pedro agora cuida da landing da Acme em vez do João"
+   intencao: "editar"  (reatribuição de responsável)
+   titulo:    "Landing page da Acme"
+   responsavel: "Pedro"
+   tags:      []
+
+   ─ "comentar" (4 exemplos — incluindo casos curtos comuns) ─
+
+   [A] Texto: "Sobre a demanda de páginas da Acme, já fiz 2 de 10 páginas hoje."
    intencao: "comentar"  (adiciona informação sem alterar campos)
    titulo:    "Páginas de serviço da Acme"
    descricao_principal: "Progresso: 2 de 10 páginas concluídas."
+   tags:      []
+
+   [B] Texto: "Feito 3 das 10 do Bruning"
+   intencao: "comentar"  (curto, mas claramente refere demanda existente
+                          e adiciona progresso — sem prazo nem mudança)
+   titulo:    "Demanda do Bruning Homes"
+   descricao_principal: "Progresso: 3 das 10 feitas."
+   tags:      []
+
+   [C] Texto: "Cliente da Acme aprovou o banner ontem, pode seguir"
+   intencao: "comentar"  (atualização de status conversacional, não muda campos)
+   titulo:    "Banner da Acme"
+   descricao_principal: "Cliente aprovou o banner — liberado pra seguir."
+   tags:      []
+
+   [D] Texto: "O link do figma da página da Bruning é https://figma.com/abc"
+   intencao: "comentar"  (informação suplementar — link, observação, etc.)
+   titulo:    "Página da Bruning Homes"
+   descricao_principal: "Link do Figma: https://figma.com/abc"
+   tags:      []
+
+   DICAS para decidir entre criar/editar/comentar:
+   - Verbo "criar/fazer/adicionar/desenvolver" + objeto novo → criar.
+   - Frase começa com "a demanda X..." OU "muda/altera/atualiza X" + valor
+     novo de campo (prazo, prioridade, responsável) → editar.
+   - Frase referencia demanda existente E acrescenta INFORMAÇÃO (progresso,
+     observação, link, status conversacional) → comentar.
+   - Em dúvida entre editar e comentar: se há valor novo pra UM CAMPO
+     específico → editar. Se é texto livre/observação → comentar.
 
 5. REGRAS DOS BLOCOS DE ANEXO (campo \`descricao_anexos\`):
 

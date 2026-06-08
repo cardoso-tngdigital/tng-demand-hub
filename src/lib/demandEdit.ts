@@ -61,12 +61,16 @@ export function diffDemand(args: {
     diffs.push(makeDiff("assignee_id", current.assignee_id, proposedAssigneeId));
   }
 
-  // Título — só se a IA propôs algo diferente. Filtro de confiança não vale
-  // aqui porque IA sempre retorna título.
-  const newTitle = proposed.titulo.trim();
-  if (newTitle && newTitle !== current.title) {
-    diffs.push(makeDiff("title", current.title, newTitle));
-  }
+  // Título e tags NÃO entram no diff de edição. Quando o user pede
+  // "muda o prazo da demanda X pra urgente", ele NÃO quer renomear a
+  // demanda nem trocar as tags — a IA inevitavelmente gera um título
+  // novo descrevendo o pedido (ex.: "Atualizar prazo da demanda X"),
+  // mas isso seria sobrescrever o título real da demanda. Tags têm o
+  // mesmo problema: a IA cospe tags relacionadas ao verbo do pedido
+  // ("atualizacao", "prazo"), não as tags semânticas da demanda em si.
+  //
+  // Se um dia o user quiser EXPLICITAMENTE renomear, o caminho é abrir
+  // o drawer e editar manualmente.
 
   // Prioridade — só se confiança >= 0.5. Caso contrário a IA pode estar
   // apenas devolvendo o default "media".
@@ -92,15 +96,6 @@ export function diffDemand(args: {
     );
   }
 
-  // Tags — só conta como diff se a IA propôs algo (lista não vazia) e o
-  // conteúdo é diferente.
-  if (
-    proposed.tags.length > 0 &&
-    !sameStringArray(current.tags, proposed.tags)
-  ) {
-    diffs.push(makeDiff("tags", current.tags, proposed.tags));
-  }
-
   return diffs;
 }
 
@@ -115,14 +110,6 @@ function makeDiff(
     oldValue,
     newValue,
   };
-}
-
-function sameStringArray(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
 }
 
 /**

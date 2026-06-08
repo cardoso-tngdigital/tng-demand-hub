@@ -42,21 +42,20 @@ describe("diffDemand", () => {
     expect(out).toEqual([]);
   });
 
-  it("detecta mudança de título", () => {
-    const current = makeDemand({ title: "Antigo" });
-    const proposed = makeExtracted({ titulo: "Novo" });
+  it("NUNCA propõe mudança de título em edição (preserva o original)", () => {
+    // A IA gera novo título descrevendo o pedido do user ("Atualizar prazo
+    // da demanda X"), mas em edição o título da demanda deve permanecer.
+    const current = makeDemand({ title: "Páginas de serviço da Acme" });
+    const proposed = makeExtracted({
+      titulo: "Atualizar prazo das páginas da Acme",
+    });
     const out = diffDemand({
       current,
       proposed,
       proposedClientId: null,
       proposedAssigneeId: null,
     });
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({
-      field: "title",
-      oldValue: "Antigo",
-      newValue: "Novo",
-    });
+    expect(out.find((d) => d.field === "title")).toBeUndefined();
   });
 
   it("detecta mudança de prazo quando IA propôs explícito", () => {
@@ -152,16 +151,18 @@ describe("diffDemand", () => {
     expect(out.find((d) => d.field === "client_id")).toBeUndefined();
   });
 
-  it("detecta mudança de tags quando lista difere", () => {
-    const current = makeDemand({ tags: ["a", "b"] });
-    const proposed = makeExtracted({ tags: ["a", "c"] });
+  it("NUNCA propõe mudança de tags em edição", () => {
+    // Tags da IA refletem o verbo do pedido ("atualizacao", "prazo"), não
+    // as tags semânticas da demanda original.
+    const current = makeDemand({ tags: ["wordpress", "design"] });
+    const proposed = makeExtracted({ tags: ["prazo", "atualizacao"] });
     const out = diffDemand({
       current,
       proposed,
       proposedClientId: null,
       proposedAssigneeId: null,
     });
-    expect(out.find((d) => d.field === "tags")?.newValue).toEqual(["a", "c"]);
+    expect(out.find((d) => d.field === "tags")).toBeUndefined();
   });
 });
 
