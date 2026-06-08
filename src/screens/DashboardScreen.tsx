@@ -35,13 +35,11 @@ type StatusFilter = DemandStatus | "all" | "overdue";
 type PriorityFilter = DemandPriority | "all";
 type RefFilter = string | "all" | "none";
 
-// Paleta termômetro: intensidade visual proporcional à urgência. Antes a
-// média era azul (sky) que conflitava com o botão "A fazer". Agora segue:
-// baixa (cinza/neutro) → média (amarelo) → alta (laranja) → urgente
-// (vermelho). Botões de status mantêm sky/orange/emerald sem se cruzar.
+// Paleta de prioridade. "A fazer" agora é teal (verde-água) e
+// "Em andamento" é emerald — sem conflito com sky (média) e orange (alta).
 const PRIORITY_DOT: Record<DemandPriority, string> = {
   baixa: "bg-tng-marine-400",
-  media: "bg-amber-400",
+  media: "bg-sky-400",
   alta: "bg-orange-400",
   urgente: "bg-red-500",
 };
@@ -454,7 +452,9 @@ export function DashboardScreen() {
       </header>
 
       {/* Stats clicáveis — funcionam como filtro por status. Cada card
-          alterna entre "filtrar por este status" e "todos". */}
+          alterna entre "filtrar por este status" e "todos". Números em
+          branco (neutros) pra não competir visualmente com os badges /
+          botões de status do card. Atrasadas leva ícone de atenção. */}
       <section className="grid grid-cols-4 gap-3 border-b border-tng-marine-700 px-6 py-4">
         <StatFilterCard
           label="Total"
@@ -465,22 +465,20 @@ export function DashboardScreen() {
         <StatFilterCard
           label="A fazer"
           value={stats.todo}
-          accent="text-sky-400"
           active={statusFilter === "todo"}
           onClick={() => setStatusFilter(statusFilter === "todo" ? "all" : "todo")}
         />
         <StatFilterCard
           label="Em andamento"
           value={stats.doing}
-          accent="text-tng-orange-400"
           active={statusFilter === "doing"}
           onClick={() => setStatusFilter(statusFilter === "doing" ? "all" : "doing")}
         />
         <StatFilterCard
           label="Atrasadas"
           value={stats.overdue}
-          accent="text-red-400"
           active={statusFilter === "overdue"}
+          icon={<i className="fa-solid fa-triangle-exclamation text-red-400" aria-hidden="true" />}
           onClick={() => setStatusFilter(statusFilter === "overdue" ? "all" : "overdue")}
         />
       </section>
@@ -878,6 +876,12 @@ export function CardBadges({
 // Trilha rápida de status — clicar atualiza direto sem abrir drawer.
 // Usado no card da lista (com filtro de "está aberta") e no header do
 // drawer (com select removido).
+//
+// Paleta separada da prioridade pra não confundir:
+//   - A fazer:      teal (verde-água)  — neutro, "em fila"
+//   - Em andamento: emerald borda+texto, sem bg — "trabalho ativo"
+//   - Concluída:    emerald com bg só no hover/ativo — "fechado"
+// Antes "Em andamento" era laranja, que conflitava com prioridade Alta.
 const STATUS_TRACK: {
   value: DemandStatus;
   label: string;
@@ -887,20 +891,20 @@ const STATUS_TRACK: {
   {
     value: "todo",
     label: "A fazer",
-    active: "bg-sky-500/20 text-sky-200 border-sky-400",
-    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-sky-400/60 hover:text-sky-200",
+    active: "bg-teal-500/20 text-teal-200 border-teal-400",
+    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-teal-400/60 hover:text-teal-200",
   },
   {
     value: "doing",
     label: "Em andamento",
-    active: "bg-tng-orange-400/20 text-tng-orange-200 border-tng-orange-400",
-    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-tng-orange-400/60 hover:text-tng-orange-200",
+    active: "bg-transparent text-emerald-300 border-emerald-400",
+    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-emerald-400/60 hover:text-emerald-300",
   },
   {
     value: "done",
     label: "Concluída",
-    active: "bg-emerald-500/20 text-emerald-200 border-emerald-400",
-    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-emerald-400/60 hover:text-emerald-200",
+    active: "bg-emerald-500/30 text-emerald-100 border-emerald-400",
+    inactive: "text-tng-marine-300 border-tng-marine-600 hover:bg-emerald-500/15 hover:border-emerald-400/60 hover:text-emerald-200",
   },
 ];
 
@@ -950,13 +954,14 @@ function StatFilterCard({
   label,
   value,
   active,
-  accent = "text-tng-marine-50",
+  icon,
   onClick,
 }: {
   label: string;
   value: number;
   active: boolean;
-  accent?: string;
+  // Ícone opcional ao lado do número (usado em "Atrasadas").
+  icon?: React.ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -970,7 +975,10 @@ function StatFilterCard({
           : "border-tng-marine-700 hover:border-tng-marine-500 hover:bg-tng-marine-800/60"
       }`}
     >
-      <div className={`font-sans text-2xl font-semibold ${accent}`}>{value}</div>
+      <div className="flex items-center gap-2 font-sans text-2xl font-semibold text-tng-marine-50">
+        <span>{value}</span>
+        {icon}
+      </div>
       <div className="text-[11px] uppercase tracking-wider text-tng-marine-300">{label}</div>
     </button>
   );

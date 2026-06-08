@@ -11,10 +11,10 @@ const COLUMNS: { status: DemandStatus; label: string; accent: string }[] = [
   { status: "archived", label: "Arquivada", accent: "border-tng-marine-500/40" },
 ];
 
-// Paleta termômetro — espelha PRIORITY_DOT do DashboardScreen.
+// Espelha PRIORITY_DOT do DashboardScreen.
 const PRIORITY_DOT: Record<DemandPriority, string> = {
   baixa: "bg-tng-marine-400",
-  media: "bg-amber-400",
+  media: "bg-sky-400",
   alta: "bg-orange-400",
   urgente: "bg-red-500",
 };
