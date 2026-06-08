@@ -172,20 +172,36 @@ fn set_capture_double_tap(
 // Detector de dupla pressão — polling em thread separada
 // ---------------------------------------------------------------------------
 
+// CoreGraphics: query síncrona ao estado físico dos modificadores. Não
+// captura eventos (não exige Accessibility), só lê o flag register atual.
+// O wrapper `core-graphics` 0.24 não expõe `flags_state` ainda, então
+// declaramos a função do framework direto via FFI — é estável desde
+// macOS 10.4 e amplamente documentada.
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceFlagsState(state_id: u32) -> u64;
+}
+
 #[cfg(target_os = "macos")]
 fn modifier_pressed(mode: u8) -> bool {
-    use core_graphics::event::CGEventFlags;
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-    // HIDSystemState reflete o estado físico do hardware no momento — não
-    // exige Accessibility (é uma query estática, não captura de eventos).
-    let flags = CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState);
-    match mode {
-        1 => flags.contains(CGEventFlags::CGEventFlagControl),
-        2 => flags.contains(CGEventFlags::CGEventFlagAlternate), // Option
-        3 => flags.contains(CGEventFlags::CGEventFlagShift),
-        4 => flags.contains(CGEventFlags::CGEventFlagCommand),
-        _ => false,
-    }
+    // kCGEventSourceStateHIDSystemState = 1
+    const HID_SYSTEM_STATE: u32 = 1;
+    // Bitmasks oficiais (CGEventFlags em <CoreGraphics/CGEventTypes.h>)
+    const FLAG_CONTROL: u64 = 0x040000;
+    const FLAG_ALTERNATE: u64 = 0x080000; // Option
+    const FLAG_SHIFT: u64 = 0x020000;
+    const FLAG_COMMAND: u64 = 0x100000;
+
+    let flags = unsafe { CGEventSourceFlagsState(HID_SYSTEM_STATE) };
+    let mask = match mode {
+        1 => FLAG_CONTROL,
+        2 => FLAG_ALTERNATE,
+        3 => FLAG_SHIFT,
+        4 => FLAG_COMMAND,
+        _ => return false,
+    };
+    flags & mask != 0
 }
 
 #[cfg(target_os = "windows")]
