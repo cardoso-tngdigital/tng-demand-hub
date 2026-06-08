@@ -188,13 +188,23 @@ export async function pickFilesNative(): Promise<{ files: File[]; errors: string
   console.log("[picker] dialog retornou:", selected);
   if (!selected) return { files: [], errors: [] };
   const paths = Array.isArray(selected) ? selected : [selected];
+  return readPathsAsFiles(paths);
+}
+
+/**
+ * Lê caminhos de arquivo do disco via comando Rust e constrói File objects
+ * em memória. Usado tanto pelo dialog nativo (pickFilesNative) quanto pelo
+ * drag-and-drop de arquivos do OS (Tauri emite paths absolutos via evento
+ * `tauri://drag-drop` quando dragDropEnabled=true na janela).
+ */
+export async function readPathsAsFiles(
+  paths: string[],
+): Promise<{ files: File[]; errors: string[] }> {
   const files: File[] = [];
   const errors: string[] = [];
   for (const path of paths) {
-    console.log("[picker] lendo via Rust:", path);
     try {
       const raw = await invoke<number[]>("read_file_bytes", { path });
-      console.log("[picker] read_file_bytes devolveu", raw?.length ?? "null", "bytes para", path);
       if (!raw || raw.length === 0) {
         errors.push(`${path}: leitura devolveu vazio`);
         continue;
@@ -204,15 +214,13 @@ export async function pickFilesNative(): Promise<{ files: File[]; errors: string
       const ext = name.split(".").pop()?.toLowerCase() ?? "";
       const mime = EXTENSION_FALLBACK[ext] ?? "application/octet-stream";
       const file = new File([bytes], name, { type: mime });
-      console.log("[picker] File criado:", { name, size: file.size, type: mime });
       files.push(file);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[picker] read_file_bytes falhou para", path, ":", err);
+      console.error("[readPathsAsFiles] falhou para", path, ":", err);
       errors.push(`${path.split(/[\\/]/).pop() ?? path}: ${msg}`);
     }
   }
-  console.log("[picker] resultado final:", { ok: files.length, err: errors.length });
   return { files, errors };
 }
 
