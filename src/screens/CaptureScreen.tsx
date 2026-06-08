@@ -534,13 +534,13 @@ function InputView(props: {
 
   return (
     <div
-      className="flex h-screen items-center justify-center bg-tng-marine-900 p-0"
+      className="flex h-screen items-center justify-center bg-transparent p-2"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <div
-        className={`flex h-full w-full flex-col overflow-hidden border bg-tng-marine-700 transition ${
+        className={`flex h-full w-full flex-col overflow-hidden rounded-2xl border bg-tng-marine-700 shadow-2xl shadow-black/40 transition ${
           dragOver ? "border-tng-orange-400" : "border-tng-marine-600/60"
         }`}
       >
@@ -768,8 +768,8 @@ function ConfirmView(props: {
   }, [clientId, assigneeId, prioridade, prazo, titulo, descricao, tags, infraestrutura, props.onCancel]);
 
   return (
-    <div className="flex h-screen items-center justify-center bg-tng-marine-900 p-0">
-      <div className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700">
+    <div className="flex h-screen items-center justify-center bg-transparent p-2">
+      <div className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-tng-marine-600/60 bg-tng-marine-700 shadow-2xl shadow-black/40">
         <div
           data-tauri-drag-region
           className="flex items-center justify-between border-b border-tng-marine-600/60 px-5 py-3"
@@ -812,7 +812,7 @@ function ConfirmView(props: {
             <select
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
-              className={fieldClass(lowConfidence(conf.cliente) || !!clienteHint)}
+              className={`tng-select ${fieldClass(lowConfidence(conf.cliente) || !!clienteHint)}`}
             >
               <option value="" className="bg-tng-marine-800">— Sem cliente</option>
               {props.clients.map((c) => (
@@ -832,7 +832,7 @@ function ConfirmView(props: {
             <select
               value={assigneeId}
               onChange={(e) => setAssigneeId(e.target.value)}
-              className={fieldClass(lowConfidence(conf.responsavel) || !!responsavelHint)}
+              className={`tng-select ${fieldClass(lowConfidence(conf.responsavel) || !!responsavelHint)}`}
             >
               <option value="" className="bg-tng-marine-800">— Sem responsável</option>
               {props.profiles.map((p) => (
@@ -851,7 +851,7 @@ function ConfirmView(props: {
             <select
               value={prioridade}
               onChange={(e) => setPrioridade(e.target.value as DemandPriority)}
-              className={fieldClass(lowConfidence(conf.prioridade))}
+              className={`tng-select ${fieldClass(lowConfidence(conf.prioridade))}`}
             >
               {PRIORITY_OPTIONS.map((p) => (
                 <option key={p.value} value={p.value} className="bg-tng-marine-800">
@@ -903,7 +903,7 @@ function ConfirmView(props: {
               onChange={(e) =>
                 setInfraestrutura(e.target.value as DemandInfrastructure | "")
               }
-              className={fieldClass(false)}
+              className={`tng-select ${fieldClass(false)}`}
             >
               <option value="" className="bg-tng-marine-800">— Não classificada</option>
               <option value="wordpress" className="bg-tng-marine-800">WordPress</option>

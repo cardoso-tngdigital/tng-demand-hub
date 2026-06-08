@@ -646,7 +646,7 @@ function EditableSelect({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="block w-full rounded-md border border-tng-marine-600 bg-tng-marine-800 px-2 py-1 text-sm text-tng-marine-100 focus:border-tng-orange-400 focus:outline-none disabled:opacity-60"
+        className="tng-select block w-full rounded-md border border-tng-marine-600 bg-tng-marine-800 px-2.5 py-1.5 text-sm text-tng-marine-100 focus:border-tng-orange-400 focus:outline-none disabled:opacity-60"
       >
         {children}
       </select>

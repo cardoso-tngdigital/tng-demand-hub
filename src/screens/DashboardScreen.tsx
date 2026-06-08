@@ -35,10 +35,14 @@ type StatusFilter = DemandStatus | "all" | "overdue";
 type PriorityFilter = DemandPriority | "all";
 type RefFilter = string | "all" | "none";
 
+// Paleta termômetro: intensidade visual proporcional à urgência. Antes a
+// média era azul (sky) que conflitava com o botão "A fazer". Agora segue:
+// baixa (cinza/neutro) → média (amarelo) → alta (laranja) → urgente
+// (vermelho). Botões de status mantêm sky/orange/emerald sem se cruzar.
 const PRIORITY_DOT: Record<DemandPriority, string> = {
   baixa: "bg-tng-marine-400",
-  media: "bg-sky-400",
-  alta: "bg-tng-orange-400",
+  media: "bg-amber-400",
+  alta: "bg-orange-400",
   urgente: "bg-red-500",
 };
 
@@ -623,10 +627,10 @@ function ViewToggle({
 }
 
 const PRIORITY_CHIPS: { value: DemandPriority; label: string; dot: string }[] = [
-  { value: "urgente", label: "Urgente", dot: "bg-red-500" },
-  { value: "alta", label: "Alta", dot: "bg-tng-orange-400" },
-  { value: "media", label: "Média", dot: "bg-sky-400" },
-  { value: "baixa", label: "Baixa", dot: "bg-tng-marine-400" },
+  { value: "urgente", label: "Urgente", dot: PRIORITY_DOT.urgente },
+  { value: "alta", label: "Alta", dot: PRIORITY_DOT.alta },
+  { value: "media", label: "Média", dot: PRIORITY_DOT.media },
+  { value: "baixa", label: "Baixa", dot: PRIORITY_DOT.baixa },
 ];
 
 function FilterBar(props: {
@@ -778,7 +782,7 @@ function FilterSelect({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`rounded-md border bg-tng-marine-800 px-2 py-1 text-xs text-tng-marine-100 transition focus:border-tng-orange-400 focus:outline-none ${
+      className={`tng-select rounded-md border bg-tng-marine-800 px-2.5 py-1 text-xs text-tng-marine-100 transition focus:border-tng-orange-400 focus:outline-none ${
         active ? "border-tng-orange-400/60" : "border-tng-marine-600"
       }`}
     >
