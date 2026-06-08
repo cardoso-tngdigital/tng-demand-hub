@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
-  type DragEvent,
   type KeyboardEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -632,7 +631,10 @@ function InputView(props: {
   onManualSave: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [dragOver, setDragOver] = useState(false);
+  // dragOver fica como false fixo enquanto drag-drop não é reabilitado
+  // (ver TODO acima). Mantemos a state pra preservar o setup do shell e
+  // facilitar o retorno quando a feature voltar.
+  const [dragOver] = useState(false);
 
   // Foca o textarea no mount e toda vez que a janela ganha foco — a
   // janela 'capture' do Tauri fica viva escondida entre invocações do
@@ -685,25 +687,16 @@ function InputView(props: {
     }
   }
 
-  function handleDragOver(e: DragEvent<HTMLDivElement>) {
-    if (e.dataTransfer.types.includes("Files")) {
-      e.preventDefault();
-      setDragOver(true);
-    }
-  }
-
-  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
-    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-    setDragOver(false);
-  }
-
-  function handleDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setDragOver(false);
-    if (e.dataTransfer.files.length > 0) {
-      void props.onAddFiles(e.dataTransfer.files);
-    }
-  }
+  // Drag-and-drop de arquivos externos está temporariamente desabilitado
+  // pra essa janela: o WKWebView do macOS abria o arquivo como conteúdo
+  // (preview de imagem com zoom, PDF com botões de página) e travava a
+  // janela inteira — só dava pra sair matando o processo. Setamos
+  // dragDropEnabled:true no tauri.conf.json pra o Tauri runtime
+  // interceptar o evento ANTES do webview ver, "comendo" o drop. UX fica:
+  // arrastar arquivo não anexa, mas a janela não trava. Usuário usa ⌘V
+  // (clipboard) ou o botão "escolha" — ambos funcionam.
+  // TODO(#83): reabilitar drag com listen("tauri://drag-drop") quando
+  // tivermos diagnóstico claro da regressão (versão do Tauri ou macOS).
 
   async function handlePickFiles() {
     const { files, errors } = await pickFilesNative();
@@ -717,12 +710,7 @@ function InputView(props: {
   const canSubmit = props.text.trim().length > 0;
 
   return (
-    <div
-      className="flex h-screen items-center justify-center bg-tng-marine-700"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
+    <div className="flex h-screen items-center justify-center bg-tng-marine-700">
       <div
         className={`flex h-full w-full flex-col overflow-hidden border bg-tng-marine-700 transition ${
           dragOver ? "border-tng-orange-400" : "border-tng-marine-600/60"
@@ -771,25 +759,21 @@ function InputView(props: {
 
         <div className="flex items-center justify-between border-t border-tng-marine-600/60 bg-tng-marine-800/40 px-5 py-2">
           <span className="text-[11px] text-tng-marine-300">
-            {dragOver ? (
-              <span className="text-tng-orange-400">Solte para anexar…</span>
-            ) : (
-              <><i className="fa-solid fa-paperclip mr-1" aria-hidden="true" /> Cole, arraste arquivos ou{" "}
-                <button
-                  type="button"
-                  onClick={() => void handlePickFiles()}
-                  className="underline-offset-2 hover:underline focus:underline focus:outline-none"
-                >
-                  escolha
-                </button>
-                <span className="ml-2 text-tng-marine-400">· Máx. 50MB por arquivo</span>
-                {props.attachments.length > 0 && (
-                  <span className="ml-2 text-tng-marine-400">
-                    · {props.attachments.length} anexo
-                    {props.attachments.length > 1 ? "s" : ""}
-                  </span>
-                )}
-              </>
+            <i className="fa-solid fa-paperclip mr-1" aria-hidden="true" />{" "}
+            Cole (<kbd className="rounded bg-tng-marine-600 px-1 text-tng-marine-100">⌘V</kbd>) ou{" "}
+            <button
+              type="button"
+              onClick={() => void handlePickFiles()}
+              className="underline-offset-2 hover:underline focus:underline focus:outline-none"
+            >
+              escolha
+            </button>
+            <span className="ml-2 text-tng-marine-400">· Máx. 50MB por arquivo</span>
+            {props.attachments.length > 0 && (
+              <span className="ml-2 text-tng-marine-400">
+                · {props.attachments.length} anexo
+                {props.attachments.length > 1 ? "s" : ""}
+              </span>
             )}
           </span>
         </div>
