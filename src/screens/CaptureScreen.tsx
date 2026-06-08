@@ -8,8 +8,21 @@ import {
   type KeyboardEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { createDemand } from "../lib/demands";
+import {
+  createDemand,
+  listDemands,
+  subscribeToDemands,
+  updateDemand,
+} from "../lib/demands";
+import { createComment } from "../lib/comments";
 import { extractDemand, type ExtractedDemand } from "../lib/ai";
+import { findCandidateDemands } from "../lib/demandSearch";
+import {
+  diffDemand,
+  diffsToPatch,
+  type FieldDiff,
+} from "../lib/demandEdit";
+import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
 import { supabase } from "../lib/supabase/client";
 import {
   buildPendingAttachment,
@@ -40,6 +53,7 @@ import {
 } from "../lib/classificationRules";
 import type {
   ClassificationRule,
+  Demand,
   DemandInfrastructure,
   DemandPriority,
 } from "../types/database";
@@ -107,7 +121,11 @@ type Initial = {
   appliedRules: AppliedRuleEntry[];
 };
 
-type Mode = "input" | "confirm";
+// "input" mostra o textarea. "target" só aparece quando a IA detecta
+// intencao=editar|comentar e precisa que o user confirme qual demanda
+// existente é o alvo. "confirm" é a tela final de revisão (criar/editar/
+// comentar, view varia por intencao).
+type Mode = "input" | "target" | "confirm";
 
 export function CaptureScreen() {
   const [mode, setMode] = useState<Mode>("input");
@@ -120,6 +138,12 @@ export function CaptureScreen() {
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
+  // Lista de todas as demandas. Necessária pra fluxos de editar/comentar
+  // — usamos pra filtrar candidatas localmente antes de mostrar pro user.
+  // Mantida em sync via realtime de demands.
+  const [allDemands, setAllDemands] = useState<Demand[]>([]);
+  const [candidates, setCandidates] = useState<Demand[]>([]);
+  const [targetDemand, setTargetDemand] = useState<Demand | null>(null);
   // pending.id → referência no Storage tmp (set por anexos grandes durante
   // a extração). Usado depois pra decidir entre uploadAttachment (inline
   // já materializado) vs uploadAttachmentFromTmp (apenas move).
@@ -147,6 +171,31 @@ export function CaptureScreen() {
       unsubClients();
       unsubProfiles();
     };
+  }, []);
+
+  // Carrega lista de demandas (cap 200) + realtime. Usado pelos fluxos de
+  // editar/comentar pra propor candidatas.
+  useEffect(() => {
+    (async () => {
+      const { data } = await listDemands(200);
+      setAllDemands(data);
+    })();
+    const unsub = subscribeToDemands((event, change) => {
+      setAllDemands((prev) => {
+        if (event === "INSERT" && change.new) {
+          if (prev.some((d) => d.id === change.new!.id)) return prev;
+          return [change.new, ...prev];
+        }
+        if (event === "UPDATE" && change.new) {
+          return prev.map((d) => (d.id === change.new!.id ? change.new! : d));
+        }
+        if (event === "DELETE" && change.old) {
+          return prev.filter((d) => d.id !== change.old!.id);
+        }
+        return prev;
+      });
+    });
+    return unsub;
   }, []);
 
   // Garante que object URLs criados para preview sejam liberados na desmontagem.
@@ -203,6 +252,8 @@ export function CaptureScreen() {
     setMode("input");
     setBusy(false);
     setStorageMap(new Map());
+    setCandidates([]);
+    setTargetDemand(null);
     try {
       await invoke("hide_capture_window");
     } catch (err) {
@@ -309,7 +360,83 @@ export function CaptureScreen() {
       infraestrutura: e.infraestrutura,
       appliedRules,
     });
+
+    // Rota por intenção: criar segue direto pro confirm; editar/comentar
+    // passa antes pela tela "target" pra user escolher a demanda alvo.
+    if (e.intencao !== "criar") {
+      const cands = findCandidateDemands(
+        trimmed,
+        applied.clientId,
+        allDemands,
+        8,
+      );
+      setCandidates(cands);
+      // Atalho: única candidata óbvia → pula direto pro confirm com ela
+      // selecionada. User ainda pode "voltar" se errou.
+      if (cands.length === 1) {
+        setTargetDemand(cands[0]);
+        setMode("confirm");
+      } else {
+        setMode("target");
+      }
+      return;
+    }
+
     setMode("confirm");
+  }
+
+  // ----- Handlers de target / edit / comment -----
+
+  function pickTarget(d: Demand) {
+    setTargetDemand(d);
+    setMode("confirm");
+  }
+
+  // Fallback: usuário decide criar nova mesmo quando IA detectou edit/comment.
+  // Útil quando a IA classifica errado ou a demanda alvo não existe na lista.
+  function convertToCreate() {
+    if (extracted) {
+      setExtracted({ ...extracted, intencao: "criar" });
+    }
+    setTargetDemand(null);
+    setMode("confirm");
+  }
+
+  async function saveEditMode(diffs: FieldDiff[]) {
+    if (!targetDemand) return;
+    setBusy(true);
+    setError(null);
+    const patch = diffsToPatch(diffs);
+    if (Object.keys(patch).length === 0) {
+      setBusy(false);
+      setError("Nenhuma mudança marcada.");
+      return;
+    }
+    const { error } = await updateDemand(targetDemand.id, patch);
+    setBusy(false);
+    if (error) {
+      setError(error);
+      return;
+    }
+    await closeWindow();
+  }
+
+  async function saveCommentMode(content: string) {
+    if (!targetDemand) return;
+    const trimmed = content.trim();
+    if (!trimmed) {
+      setError("Comentário vazio.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const { error } = await createComment(targetDemand.id, trimmed);
+    setBusy(false);
+    if (error) {
+      setError(error);
+      return;
+    }
+    await closeWindow();
   }
 
   /**
@@ -391,7 +518,64 @@ export function CaptureScreen() {
     await closeWindow();
   }
 
+  // Tela intermediária pra editar/comentar: escolher demanda alvo.
+  if (mode === "target" && extracted && initial) {
+    return (
+      <TargetView
+        extracted={extracted}
+        candidates={candidates}
+        clients={clients}
+        profiles={profiles}
+        onPick={pickTarget}
+        onConvertToCreate={convertToCreate}
+        onCancel={() => void closeWindow()}
+        onBack={() => {
+          setMode("input");
+          setExtracted(null);
+          setInitial(null);
+          setCandidates([]);
+        }}
+      />
+    );
+  }
+
   if (mode === "confirm" && extracted && initial) {
+    // Editar e comentar têm telas próprias — usam targetDemand. Se por
+    // algum motivo não houver target ainda, cai pro fluxo de criar.
+    if (extracted.intencao === "editar" && targetDemand) {
+      const proposedDiffs = diffDemand({
+        current: targetDemand,
+        proposed: extracted,
+        proposedClientId: initial.clientId,
+        proposedAssigneeId: initial.assigneeId,
+      });
+      return (
+        <EditConfirmView
+          target={targetDemand}
+          diffs={proposedDiffs}
+          clients={clients}
+          profiles={profiles}
+          busy={busy}
+          error={error}
+          onCancel={() => void closeWindow()}
+          onBack={() => setMode("target")}
+          onConfirm={(selected) => void saveEditMode(selected)}
+        />
+      );
+    }
+    if (extracted.intencao === "comentar" && targetDemand) {
+      return (
+        <CommentConfirmView
+          target={targetDemand}
+          initialContent={initial.descricao}
+          busy={busy}
+          error={error}
+          onCancel={() => void closeWindow()}
+          onBack={() => setMode("target")}
+          onConfirm={(content) => void saveCommentMode(content)}
+        />
+      );
+    }
     return (
       <ConfirmView
         extracted={extracted}
@@ -791,22 +975,6 @@ function ConfirmView(props: {
           </div>
         </div>
 
-        {props.extracted.intencao !== "criar" && (
-          <div className="border-b border-sky-400/30 bg-sky-400/10 px-5 py-2 text-[10px] text-sky-200">
-            <span className="font-medium">
-              <i className="fa-solid fa-wand-magic-sparkles mr-1.5" aria-hidden="true" />
-              Intenção detectada: {props.extracted.intencao}
-            </span>
-            <span className="text-sky-300/70">
-              {" "}— em breve essa intenção vai{" "}
-              {props.extracted.intencao === "editar"
-                ? "editar a demanda existente em vez de criar uma nova"
-                : "adicionar comentário à demanda existente"}
-              . Por enquanto a captura continua criando demanda nova.
-            </span>
-          </div>
-        )}
-
         {props.initial.appliedRules.length > 0 && (
           <div className="border-b border-tng-orange-400/30 bg-tng-orange-400/10 px-5 py-2 text-[10px] text-tng-orange-200">
             <span className="font-medium">Regra(s) aplicada(s):</span>{" "}
@@ -1011,4 +1179,540 @@ function fieldClass(warn: boolean): string {
   return `block w-full rounded-md border ${
     warn ? "border-tng-orange-400/60" : "border-tng-marine-600"
   } bg-tng-marine-800 px-2.5 py-1.5 text-sm text-tng-marine-50 placeholder:text-tng-marine-300 focus:border-tng-orange-400 focus:outline-none focus:ring-1 focus:ring-tng-orange-400/30`;
+}
+
+// ---------------------------------------------------------------------------
+// View 3 — Target picker (escolher demanda alvo de editar/comentar)
+// ---------------------------------------------------------------------------
+
+function TargetView(props: {
+  extracted: ExtractedDemand;
+  candidates: Demand[];
+  clients: ClientOption[];
+  profiles: ProfileOption[];
+  onPick: (demand: Demand) => void;
+  onConvertToCreate: () => void;
+  onCancel: () => void;
+  onBack: () => void;
+}) {
+  const intencaoLabel = props.extracted.intencao === "editar" ? "Editar" : "Comentar";
+  const intencaoVerb =
+    props.extracted.intencao === "editar"
+      ? "Qual demanda você quer editar?"
+      : "Em qual demanda você quer comentar?";
+
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        props.onCancel();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props.onCancel]);
+
+  return (
+    <div className="flex h-screen items-center justify-center bg-tng-marine-700">
+      <div className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700">
+        <div
+          data-tauri-drag-region
+          className="flex items-center justify-between border-b border-tng-marine-600/60 px-5 py-3"
+        >
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-sky-400" />
+            <span className="text-xs font-medium text-tng-marine-100">
+              {intencaoLabel} demanda existente
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={props.onBack}
+              className="text-[10px] uppercase tracking-wider text-tng-marine-300 hover:text-tng-marine-100"
+            >
+              ← voltar
+            </button>
+            <button
+              type="button"
+              onClick={props.onCancel}
+              aria-label="Fechar"
+              className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
+            >
+              <i className="fa-solid fa-xmark" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <p className="mb-3 text-sm text-tng-marine-100">{intencaoVerb}</p>
+          {props.candidates.length === 0 ? (
+            <p className="text-[12px] text-tng-marine-300">
+              Nenhuma demanda parecida foi encontrada. Você pode criar uma nova
+              ou voltar e refazer a captura mencionando mais detalhes.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {props.candidates.map((d) => (
+                <CandidateRow
+                  key={d.id}
+                  demand={d}
+                  clients={props.clients}
+                  profiles={props.profiles}
+                  onClick={() => props.onPick(d)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-tng-marine-600/60 bg-tng-marine-800/40 px-5 py-3">
+          <button
+            type="button"
+            onClick={props.onConvertToCreate}
+            className="text-[11px] text-tng-marine-300 underline-offset-2 hover:text-tng-marine-100 hover:underline"
+          >
+            Não é nenhuma dessas — criar nova demanda
+          </button>
+          <span className="text-[11px] text-tng-marine-300">
+            <kbd className="rounded bg-tng-marine-600 px-1.5 py-0.5 text-tng-marine-100">
+              Esc
+            </kbd>{" "}
+            cancela
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CandidateRow(props: {
+  demand: Demand;
+  clients: ClientOption[];
+  profiles: ProfileOption[];
+  onClick: () => void;
+}) {
+  const clientName = props.demand.client_id
+    ? props.clients.find((c) => c.id === props.demand.client_id)?.name
+    : null;
+  const assigneeName = props.demand.assignee_id
+    ? props.profiles.find((p) => p.id === props.demand.assignee_id)?.full_name
+    : null;
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={props.onClick}
+        className="block w-full rounded-md border border-tng-marine-600 bg-tng-marine-800/40 px-3 py-2.5 text-left transition hover:border-tng-orange-400 hover:bg-tng-marine-800"
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="line-clamp-1 text-sm font-medium text-tng-marine-50">
+            {props.demand.title ||
+              htmlToPlainText(legacyToHtml(props.demand.description)).slice(0, 80)}
+          </p>
+          <span className="shrink-0 text-[10px] uppercase tracking-wider text-tng-marine-400">
+            {props.demand.status === "todo"
+              ? "a fazer"
+              : props.demand.status === "doing"
+              ? "em andamento"
+              : props.demand.status === "done"
+              ? "concluída"
+              : props.demand.status}
+          </span>
+        </div>
+        <div className="mt-1 flex items-center gap-3 text-[10px] text-tng-marine-400">
+          {clientName && (
+            <span>
+              <i
+                className="fa-solid fa-building mr-1"
+                aria-hidden="true"
+              />
+              {clientName}
+            </span>
+          )}
+          {assigneeName && (
+            <span>
+              <i className="fa-solid fa-user mr-1" aria-hidden="true" />
+              {assigneeName}
+            </span>
+          )}
+          {props.demand.due_date && (
+            <span>
+              <i
+                className="fa-solid fa-calendar-day mr-1"
+                aria-hidden="true"
+              />
+              {formatDueDate(props.demand.due_date)}
+            </span>
+          )}
+        </div>
+      </button>
+    </li>
+  );
+}
+
+function formatDueDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return iso;
+}
+
+// ---------------------------------------------------------------------------
+// View 4 — Edit confirm (revisar diffs propostos pela IA)
+// ---------------------------------------------------------------------------
+
+const PRIORITY_LABELS_DISPLAY: Record<string, string> = {
+  baixa: "Baixa",
+  media: "Média",
+  alta: "Alta",
+  urgente: "Urgente",
+};
+const INFRA_LABELS_DISPLAY: Record<string, string> = {
+  wordpress: "WordPress",
+  site_ia: "Site com IA",
+};
+
+function formatDiffValue(
+  field: FieldDiff["field"],
+  value: unknown,
+  clients: ClientOption[],
+  profiles: ProfileOption[],
+): string {
+  if (value === null || value === undefined) return "—";
+  if (field === "client_id") {
+    return (
+      clients.find((c) => c.id === value)?.name ?? String(value)
+    );
+  }
+  if (field === "assignee_id") {
+    return (
+      profiles.find((p) => p.id === value)?.full_name ?? String(value)
+    );
+  }
+  if (field === "priority") {
+    return PRIORITY_LABELS_DISPLAY[String(value)] ?? String(value);
+  }
+  if (field === "infrastructure") {
+    return INFRA_LABELS_DISPLAY[String(value)] ?? String(value);
+  }
+  if (field === "due_date") return formatDueDate(String(value));
+  if (field === "tags") {
+    const arr = value as string[];
+    if (arr.length === 0) return "—";
+    return arr.join(", ");
+  }
+  return String(value);
+}
+
+function EditConfirmView(props: {
+  target: Demand;
+  diffs: FieldDiff[];
+  clients: ClientOption[];
+  profiles: ProfileOption[];
+  busy: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onBack: () => void;
+  onConfirm: (selected: FieldDiff[]) => void;
+}) {
+  // Por padrão todos os diffs propostos vêm marcados. User pode desmarcar
+  // os que não quer aplicar.
+  const [checked, setChecked] = useState<Set<string>>(
+    () => new Set(props.diffs.map((d) => d.field)),
+  );
+
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        props.onCancel();
+      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleConfirm();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checked]);
+
+  function toggle(field: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(field)) next.delete(field);
+      else next.add(field);
+      return next;
+    });
+  }
+
+  function handleConfirm() {
+    const selected = props.diffs.filter((d) => checked.has(d.field));
+    props.onConfirm(selected);
+  }
+
+  const targetLabel =
+    props.target.title ||
+    htmlToPlainText(legacyToHtml(props.target.description)).slice(0, 80);
+
+  const selectedCount = checked.size;
+
+  return (
+    <div className="flex h-screen items-center justify-center bg-tng-marine-700">
+      <div className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700">
+        <div
+          data-tauri-drag-region
+          className="flex items-center justify-between border-b border-tng-marine-600/60 px-5 py-3"
+        >
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-sky-400" />
+            <span className="text-xs font-medium text-tng-marine-100">
+              Editar demanda
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={props.onBack}
+              className="text-[10px] uppercase tracking-wider text-tng-marine-300 hover:text-tng-marine-100"
+            >
+              ← trocar demanda
+            </button>
+            <button
+              type="button"
+              onClick={props.onCancel}
+              aria-label="Fechar"
+              className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
+            >
+              <i className="fa-solid fa-xmark" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
+        <div className="border-b border-tng-marine-600/60 px-5 py-3">
+          <p className="text-[10px] uppercase tracking-wider text-tng-marine-300">
+            Alvo
+          </p>
+          <p className="mt-0.5 text-sm font-medium text-tng-marine-50">
+            {targetLabel}
+          </p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {props.diffs.length === 0 ? (
+            <p className="text-[12px] text-tng-marine-300">
+              A IA não detectou nenhuma mudança em relação à demanda atual.
+              Volta e refaz a captura mencionando o que precisa alterar.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {props.diffs.map((d) => {
+                const active = checked.has(d.field);
+                return (
+                  <li
+                    key={d.field}
+                    className={`rounded-md border px-3 py-2.5 transition ${
+                      active
+                        ? "border-tng-orange-400/60 bg-tng-orange-400/5"
+                        : "border-tng-marine-600 bg-tng-marine-800/30 opacity-60"
+                    }`}
+                  >
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => toggle(d.field)}
+                        className="mt-0.5 h-4 w-4 cursor-pointer accent-tng-orange-400"
+                      />
+                      <div className="flex-1">
+                        <div className="text-[10px] uppercase tracking-wider text-tng-marine-300">
+                          {d.label}
+                        </div>
+                        <div className="mt-0.5 flex items-baseline gap-2 text-sm text-tng-marine-100">
+                          <span className="text-tng-marine-400 line-through">
+                            {formatDiffValue(
+                              d.field,
+                              d.oldValue,
+                              props.clients,
+                              props.profiles,
+                            )}
+                          </span>
+                          <i
+                            className="fa-solid fa-arrow-right text-[10px] text-tng-marine-400"
+                            aria-hidden="true"
+                          />
+                          <span className="text-tng-orange-200">
+                            {formatDiffValue(
+                              d.field,
+                              d.newValue,
+                              props.clients,
+                              props.profiles,
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {props.error && (
+          <div className="border-t border-red-500/20 bg-red-500/10 px-5 py-2 text-xs text-red-300">
+            {props.error}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between border-t border-tng-marine-600/60 bg-tng-marine-800/40 px-5 py-3">
+          <span className="text-[11px] text-tng-marine-300">
+            <kbd className="rounded bg-tng-marine-600 px-1.5 py-0.5 text-tng-marine-100">
+              Esc
+            </kbd>{" "}
+            cancela &nbsp;·&nbsp;
+            <kbd className="rounded bg-tng-marine-600 px-1.5 py-0.5 text-tng-marine-100">
+              ⌘↵
+            </kbd>{" "}
+            aplica
+          </span>
+          <button
+            onClick={handleConfirm}
+            disabled={props.busy || selectedCount === 0}
+            className="rounded-md bg-tng-orange-400 px-3 py-1.5 text-xs font-semibold text-tng-marine-900 transition hover:bg-tng-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {props.busy
+              ? "Aplicando…"
+              : selectedCount === 0
+              ? "Marque ao menos um campo"
+              : `Aplicar ${selectedCount} mudança${selectedCount > 1 ? "s" : ""}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// View 5 — Comment confirm (adicionar comentário a demanda existente)
+// ---------------------------------------------------------------------------
+
+function CommentConfirmView(props: {
+  target: Demand;
+  initialContent: string;
+  busy: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onBack: () => void;
+  onConfirm: (content: string) => void;
+}) {
+  // A IA devolve descrição com possível bloco de anexos junto ("---" como
+  // separador). Pra comentário, queremos só a parte principal por default.
+  const initialContent = props.initialContent.split(/\n\n---\n\n/)[0].trim();
+  const [content, setContent] = useState(initialContent);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+    textareaRef.current?.select();
+  }, []);
+
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        props.onCancel();
+      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        props.onConfirm(content);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content]);
+
+  const targetLabel =
+    props.target.title ||
+    htmlToPlainText(legacyToHtml(props.target.description)).slice(0, 80);
+
+  return (
+    <div className="flex h-screen items-center justify-center bg-tng-marine-700">
+      <div className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700">
+        <div
+          data-tauri-drag-region
+          className="flex items-center justify-between border-b border-tng-marine-600/60 px-5 py-3"
+        >
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-sky-400" />
+            <span className="text-xs font-medium text-tng-marine-100">
+              Comentar em demanda
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={props.onBack}
+              className="text-[10px] uppercase tracking-wider text-tng-marine-300 hover:text-tng-marine-100"
+            >
+              ← trocar demanda
+            </button>
+            <button
+              type="button"
+              onClick={props.onCancel}
+              aria-label="Fechar"
+              className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
+            >
+              <i className="fa-solid fa-xmark" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
+        <div className="border-b border-tng-marine-600/60 px-5 py-3">
+          <p className="text-[10px] uppercase tracking-wider text-tng-marine-300">
+            Alvo
+          </p>
+          <p className="mt-0.5 text-sm font-medium text-tng-marine-50">
+            {targetLabel}
+          </p>
+        </div>
+
+        <div className="flex-1 overflow-hidden px-5 py-4">
+          <label className="mb-2 block text-[10px] uppercase tracking-wider text-tng-marine-300">
+            Comentário
+          </label>
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            rows={6}
+            className="block h-[calc(100%-2rem)] w-full resize-none rounded-md border border-tng-marine-600 bg-tng-marine-800 px-3 py-2 text-sm text-tng-marine-50 focus:border-tng-orange-400 focus:outline-none focus:ring-1 focus:ring-tng-orange-400/30"
+            disabled={props.busy}
+          />
+        </div>
+
+        {props.error && (
+          <div className="border-t border-red-500/20 bg-red-500/10 px-5 py-2 text-xs text-red-300">
+            {props.error}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between border-t border-tng-marine-600/60 bg-tng-marine-800/40 px-5 py-3">
+          <span className="text-[11px] text-tng-marine-300">
+            <kbd className="rounded bg-tng-marine-600 px-1.5 py-0.5 text-tng-marine-100">
+              Esc
+            </kbd>{" "}
+            cancela &nbsp;·&nbsp;
+            <kbd className="rounded bg-tng-marine-600 px-1.5 py-0.5 text-tng-marine-100">
+              ⌘↵
+            </kbd>{" "}
+            envia
+          </span>
+          <button
+            onClick={() => props.onConfirm(content)}
+            disabled={props.busy || content.trim().length === 0}
+            className="rounded-md bg-tng-orange-400 px-3 py-1.5 text-xs font-semibold text-tng-marine-900 transition hover:bg-tng-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {props.busy ? "Enviando…" : "Enviar comentário"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
