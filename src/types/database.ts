@@ -61,6 +61,10 @@ export interface Demand {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  // Setado pelo trigger BEFORE UPDATE (auth.uid()). Fica null no insert
+  // inicial — o autor da criação é o created_by. Usado pelas notificações
+  // pra mostrar "Fulano alterou X".
+  updated_by: string | null;
 }
 
 export interface NewDemandInput {

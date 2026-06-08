@@ -11,9 +11,19 @@ export type Confianca = {
   responsavel: number;
   prioridade: number;
   prazo: number;
+  // Confiança específica da intenção detectada (criar/editar/comentar).
+  // Capturas curtas e ambíguas tendem a ter intenção com confiança baixa —
+  // o client usa esse valor pra decidir se mostra tela de desambiguação.
+  intencao: number;
 };
 
+// "criar" é o fluxo atual (default). "editar" e "comentar" preparam o terreno
+// do chat de edição via IA — o client decide o que fazer a partir desse
+// campo. Capturas anteriores à Sprint 12 retornavam só "criar" implícito.
+export type DemandIntencao = "criar" | "editar" | "comentar";
+
 export type ExtractedDemand = {
+  intencao: DemandIntencao;
   titulo: string;
   cliente: string | null;
   responsavel: string | null;

@@ -552,18 +552,14 @@ function InputView(props: {
             <div className="h-2 w-2 rounded-full bg-tng-orange-400" />
             <span className="text-xs font-medium text-tng-marine-100">Nova captura</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-tng-marine-300">
-              ⌘⇧D
-            </span>
-            <button
-              type="button"
-              onClick={props.onCancel}
-              aria-label="Fechar"
-              className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
-            >
-              <i className="fa-solid fa-xmark" aria-hidden="true" />            </button>
-          </div>
+          <button
+            type="button"
+            onClick={props.onCancel}
+            aria-label="Fechar"
+            className="rounded-md p-1 text-tng-marine-300 hover:bg-tng-marine-600/40 hover:text-tng-marine-100"
+          >
+            <i className="fa-solid fa-xmark" aria-hidden="true" />
+          </button>
         </div>
 
         <textarea
@@ -794,6 +790,22 @@ function ConfirmView(props: {
               <i className="fa-solid fa-xmark" aria-hidden="true" />            </button>
           </div>
         </div>
+
+        {props.extracted.intencao !== "criar" && (
+          <div className="border-b border-sky-400/30 bg-sky-400/10 px-5 py-2 text-[10px] text-sky-200">
+            <span className="font-medium">
+              <i className="fa-solid fa-wand-magic-sparkles mr-1.5" aria-hidden="true" />
+              Intenção detectada: {props.extracted.intencao}
+            </span>
+            <span className="text-sky-300/70">
+              {" "}— em breve essa intenção vai{" "}
+              {props.extracted.intencao === "editar"
+                ? "editar a demanda existente em vez de criar uma nova"
+                : "adicionar comentário à demanda existente"}
+              . Por enquanto a captura continua criando demanda nova.
+            </span>
+          </div>
+        )}
 
         {props.initial.appliedRules.length > 0 && (
           <div className="border-b border-tng-orange-400/30 bg-tng-orange-400/10 px-5 py-2 text-[10px] text-tng-orange-200">

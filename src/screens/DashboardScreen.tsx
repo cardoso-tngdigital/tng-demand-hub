@@ -8,6 +8,10 @@ import {
   subscribeToNotificationClick,
   wasLocalChange,
 } from "../lib/notifications";
+import {
+  decideCommentNotification,
+  decideDemandNotification,
+} from "../lib/notificationDecider";
 import { setTrayBadge } from "../lib/tray";
 import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
 import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileOption } from "../lib/lookups";
@@ -18,9 +22,11 @@ import { ClientsAdmin } from "../components/ClientsAdmin";
 import { MembersAdmin } from "../components/MembersAdmin";
 import { AiUsageAdmin } from "../components/AiUsageAdmin";
 import { RulesAdmin } from "../components/RulesAdmin";
+import { HotkeySettings } from "../components/HotkeySettings";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { OnboardingTour } from "../components/OnboardingTour";
 import { listAllProfiles } from "../lib/profiles";
+import { displayHotkey, getStoredHotkey, type HotkeyModifier } from "../lib/hotkey";
 import type {
   Demand,
   DemandInfrastructure,
@@ -65,12 +71,6 @@ function formatRelative(iso: string): string {
   return date.toLocaleDateString("pt-BR");
 }
 
-function demandLabel(d: { title: string; description: string }): string {
-  if (d.title) return d.title;
-  const text = htmlToPlainText(legacyToHtml(d.description));
-  return text.slice(0, 80);
-}
-
 export function DashboardScreen() {
   const { user, signOut } = useAuth();
   const currentUserId = user?.id ?? null;
@@ -92,6 +92,10 @@ export function DashboardScreen() {
   const [membersAdminOpen, setMembersAdminOpen] = useState(false);
   const [aiUsageOpen, setAiUsageOpen] = useState(false);
   const [rulesAdminOpen, setRulesAdminOpen] = useState(false);
+  const [hotkeySettingsOpen, setHotkeySettingsOpen] = useState(false);
+  const [currentHotkey, setCurrentHotkey] = useState<HotkeyModifier>(() =>
+    getStoredHotkey(),
+  );
   const [isAdmin, setIsAdmin] = useState(false);
   // Nome de exibição do user atual — preferimos full_name a email no header
   // e em qualquer outro lugar do app. Email só aparece como tooltip.
@@ -205,8 +209,26 @@ export function DashboardScreen() {
   useEffect(() => {
     currentUserIdRef.current = currentUserId;
   }, [currentUserId]);
+  // Refs também pra isAdmin, clients e profiles — usadas nos callbacks de
+  // realtime (notificationDecider) sem precisar reassinar as subscriptions
+  // a cada mudança.
+  const isAdminRef = useRef<boolean>(isAdmin);
+  useEffect(() => {
+    isAdminRef.current = isAdmin;
+  }, [isAdmin]);
+  const clientsRef = useRef<ClientOption[]>(clients);
+  useEffect(() => {
+    clientsRef.current = clients;
+  }, [clients]);
+  const profilesRef = useRef<ProfileOption[]>(profiles);
+  useEffect(() => {
+    profilesRef.current = profiles;
+  }, [profiles]);
 
-  // Subscreve realtime de demandas
+  // Subscreve realtime de demandas + decide notificação por role via decider.
+  // Admin recebe TUDO (exceto suas próprias ações); membro só o que envolve
+  // ele (assignee/created_by). Toda a matriz de decisão fica em
+  // notificationDecider.ts (testada à parte).
   useEffect(() => {
     const unsubscribe = subscribeToDemands((event, change) => {
       setDemands((prev) => {
@@ -223,42 +245,25 @@ export function DashboardScreen() {
         return prev;
       });
 
-      // Notifica reatribuição para o usuário atual — exceto quando fui eu
-      // mesmo que fez a mudança (caso comum: o user se atribui pelo drawer).
-      const me = currentUserIdRef.current;
-      if (
-        event === "UPDATE" &&
-        change.new &&
-        me &&
-        change.new.assignee_id === me &&
-        change.old?.assignee_id !== me &&
-        !wasLocalChange(change.new.id)
-      ) {
-        void notifyAboutDemand(
-          "Demanda atribuída a você",
-          demandLabel(change.new),
-          change.new.id,
-        );
-      }
-
-      // Notifica conclusão para responsável e criador (exceto quem marcou).
-      // wasLocalChange evita o caso "concluí pelo botão e recebi notif do
-      // próprio eco do realtime".
-      if (
-        event === "UPDATE" &&
-        change.new &&
-        change.old &&
-        me &&
-        change.new.status === "done" &&
-        change.old.status !== "done" &&
-        (change.new.assignee_id === me || change.new.created_by === me) &&
-        !wasLocalChange(change.new.id)
-      ) {
-        void notifyAboutDemand(
-          "Demanda concluída",
-          demandLabel(change.new),
-          change.new.id,
-        );
+      const notif = decideDemandNotification({
+        event,
+        change,
+        me: currentUserIdRef.current,
+        role: isAdminRef.current ? "admin" : "member",
+        wasLocalChange,
+        ctx: {
+          clientName: (id) =>
+            id
+              ? clientsRef.current.find((c) => c.id === id)?.name
+              : undefined,
+          profileName: (id) =>
+            id
+              ? profilesRef.current.find((p) => p.id === id)?.full_name
+              : undefined,
+        },
+      });
+      if (notif) {
+        void notifyAboutDemand(notif.title, notif.body, notif.demandId);
       }
     });
     setRealtimeConnected(true);
@@ -268,22 +273,20 @@ export function DashboardScreen() {
     };
   }, []);
 
-  // Subscreve INSERTs de comentários em qualquer demanda e notifica os que
-  // chegam em demandas em que sou responsável ou criador (e que não foram
-  // feitos por mim).
+  // Subscreve INSERTs de comentários em qualquer demanda — decisão de
+  // notificar fica no decider (admin vê tudo; membro só sobre demandas dele).
   useEffect(() => {
     const unsubscribe = subscribeToAllCommentInserts((comment) => {
-      const me = currentUserIdRef.current;
-      if (!me) return;
-      if (comment.author_id === me) return;
-      const demand = demandsRef.current.find((d) => d.id === comment.demand_id);
-      if (!demand) return;
-      if (demand.assignee_id !== me && demand.created_by !== me) return;
-      void notifyAboutDemand(
-        `Novo comentário em "${demandLabel(demand)}"`,
-        htmlToPlainText(legacyToHtml(comment.content)).slice(0, 140),
-        demand.id,
-      );
+      const notif = decideCommentNotification({
+        comment,
+        demand:
+          demandsRef.current.find((d) => d.id === comment.demand_id) ?? null,
+        me: currentUserIdRef.current,
+        role: isAdminRef.current ? "admin" : "member",
+      });
+      if (notif) {
+        void notifyAboutDemand(notif.title, notif.body, notif.demandId);
+      }
     });
     return unsubscribe;
   }, []);
@@ -436,6 +439,15 @@ export function DashboardScreen() {
           >
             Regras
           </button>
+          <button
+            type="button"
+            onClick={() => setHotkeySettingsOpen(true)}
+            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
+            title="Configurar atalho da captura"
+          >
+            <i className="fa-solid fa-keyboard mr-1.5" aria-hidden="true" />
+            <span className="font-mono">{displayHotkey(currentHotkey)}</span>
+          </button>
           <span
             className="text-xs text-tng-marine-300"
             title={user?.email ?? undefined}
@@ -517,7 +529,7 @@ export function DashboardScreen() {
             {error}
           </div>
         ) : demands.length === 0 ? (
-          <EmptyState />
+          <EmptyState hotkey={currentHotkey} />
         ) : viewMode === "list" ? (
           demandsForList.length === 0 ? (
             <FilteredEmptyState onClear={clearFilters} />
@@ -582,6 +594,14 @@ export function DashboardScreen() {
         clients={clients}
         profiles={profiles}
         onClose={() => setRulesAdminOpen(false)}
+      />
+
+      <HotkeySettings
+        open={hotkeySettingsOpen}
+        onClose={() => {
+          setHotkeySettingsOpen(false);
+          setCurrentHotkey(getStoredHotkey());
+        }}
       />
 
       <OnboardingTour />
@@ -1069,17 +1089,19 @@ function DemandCard({
   );
 }
 
-function EmptyState() {
+function EmptyState({ hotkey }: { hotkey: HotkeyModifier }) {
+  const display = displayHotkey(hotkey);
   return (
     <div className="flex h-full flex-col items-center justify-center text-center">
-      <div className="rounded-full border border-tng-marine-600 bg-tng-marine-800/40 px-3 py-1.5 text-[10px] uppercase tracking-wider text-tng-marine-300">
-        ⌘⇧D
+      <div className="rounded-full border border-tng-marine-600 bg-tng-marine-800/40 px-3 py-1.5 font-mono text-xs text-tng-marine-200">
+        {display}
       </div>
       <h2 className="mt-4 font-sans text-lg font-semibold text-tng-marine-50">
         Nenhuma demanda ainda
       </h2>
       <p className="mt-2 max-w-sm text-sm text-tng-marine-300">
-        Pressione <span className="text-tng-orange-400">Cmd + Shift + D</span> em qualquer lugar para registrar a primeira captura da equipe.
+        Pressione <span className="font-mono text-tng-orange-400">{display}</span>{" "}
+        em qualquer lugar para registrar a primeira captura da equipe.
       </p>
     </div>
   );

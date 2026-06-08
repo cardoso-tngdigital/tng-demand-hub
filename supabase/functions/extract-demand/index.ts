@@ -83,7 +83,13 @@ type Confianca = {
   responsavel: number;
   prioridade: number;
   prazo: number;
+  // Confiança da intenção detectada (criar/editar/comentar).
+  intencao: number;
 };
+
+// Intenções suportadas pela IA. "criar" é o fluxo histórico (default).
+// "editar" e "comentar" preparam o terreno do chat de edição via IA.
+type Intencao = "criar" | "editar" | "comentar";
 
 // Resposta crua do Gemini: separamos descricao_principal e descricao_anexos
 // em campos distintos para forçar consistência do bloco RF-06b. O Gemini
@@ -91,6 +97,7 @@ type Confianca = {
 // dividiam o mesmo campo. A Edge Function faz a fusão depois — o client
 // recebe um único `descricao` como sempre.
 type RawExtraction = {
+  intencao: Intencao;
   titulo: string;
   cliente: string | null;
   responsavel: string | null;
@@ -104,6 +111,7 @@ type RawExtraction = {
 };
 
 type ExtractedDemand = {
+  intencao: Intencao;
   titulo: string;
   cliente: string | null;
   responsavel: string | null;
@@ -505,7 +513,23 @@ ${textualBlock}
 
 INSTRUÇÕES:
 
-1. Extraia os campos:
+1. Detecte a INTENÇÃO da captura, escolhendo um dos três valores:
+
+   - "criar"   — captura descrevendo uma demanda nova (default).
+   - "editar"  — captura referencia uma demanda EXISTENTE e quer ALTERAR
+                 campos dela (prazo, prioridade, status, responsável, etc.).
+                 Sinais: "a demanda X tem novo prazo de Y", "muda a prioridade
+                 da X pra urgente", "X agora é responsabilidade do Fulano".
+   - "comentar" — captura quer ADICIONAR INFORMAÇÃO/PROGRESSO a uma demanda
+                  existente, sem alterar campos. Sinais: "na demanda X já
+                  fiz 2 de 10 páginas", "atualização da demanda Y: o cliente
+                  aprovou", "sobre a demanda Z, o link é tal".
+
+   Quando "editar" ou "comentar", ainda preencha os outros campos como se
+   fossem os valores propostos pra alteração. O frontend usa isso pra
+   localizar a demanda alvo depois.
+
+2. Extraia os campos:
    - titulo: SUCINTO (30 a 60 caracteres), em formato verbo + objeto. Serve
      para identificar a demanda na lista em uma piscadela. Exemplos bons:
      "Ajustar banner do header", "Corrigir erro 500 no checkout",
@@ -513,24 +537,67 @@ INSTRUÇÕES:
      que ajuste o banner...", "Pedido importante do João sobre o site".
    - cliente: nome do cliente mencionado, batendo com a lista (null se não houver).
    - responsavel: nome do membro da equipe (null se não houver atribuição clara).
-   - prioridade: inferir do tom (urgente/asap → 'urgente'; importante → 'alta';
-     quando puder → 'baixa'; default 'media').
+   - prioridade: inferir do tom. Use os exemplos abaixo como referência —
+     o tom é o sinal forte, não palavras isoladas:
+       * "urgente" — pressa máxima, cliente esperando agora, downtime.
+         Ex.: "URGENTE: site fora do ar", "O cliente precisa pra hoje".
+       * "alta"    — importante, sem ser emergência. Tem prazo curto ou
+         impacto grande no cliente.
+         Ex.: "Importante, precisa sair essa semana", "Cliente cobrou".
+       * "media"   — fluxo normal (DEFAULT quando não há sinal claro).
+         Ex.: "Ajustar o footer do site da Acme".
+       * "baixa"   — quando der, sem cobrança. Melhoria interna.
+         Ex.: "Quando sobrar tempo, refatorar o componente X".
    - prazo: data ISO 8601 (YYYY-MM-DD). Interprete expressões relativas
-     ('quinta', 'amanhã', 'fim do mês') usando a DATA DE REFERÊNCIA. Null se
-     não houver menção.
+     usando a DATA DE REFERÊNCIA (${args.isoDate}, ${args.weekday}):
+       * "amanhã"        → DATA + 1 dia.
+       * "depois de amanhã" → DATA + 2 dias.
+       * "quinta"/"sexta"/...  → próxima ocorrência DESSE dia da semana
+         (se hoje é o próprio dia, é a próxima semana).
+       * "fim da semana" → próxima sexta.
+       * "fim do mês"    → último dia do mês corrente (se hoje já é o
+         último, próximo mês).
+       * "semana que vem" → segunda da próxima semana.
+       * Sem menção de prazo → null. NUNCA invente.
    - descricao_principal: reescreva o que a equipe pediu em frases claras, em
      terceira pessoa, descrevendo a tarefa. SEM mencionar anexos aqui.
    - descricao_anexos: ${attachmentsRule}
-   - tags: 1 a 3 palavras-chave curtas em kebab-case.
+   - tags: 1 a 3 palavras-chave curtas em formato kebab-case (minúsculas,
+     palavras unidas por hífen, SEM acentos). Exemplos: "design", "bug-fix",
+     "cliente-externo", "wordpress". NUNCA use snake_case ("bug_fix"),
+     PascalCase ("BugFix") ou espaços ("bug fix").
    - infraestrutura: classifique o tipo de stack do site mencionado. Valores
      possíveis:
        * 'wordpress' — captura cita WordPress, WP, plugin, tema, Elementor, etc.
        * 'site_ia'   — captura cita IA, site gerado por IA, framer-ai, etc.
        * null        — não há pista clara no texto.
 
-2. Confiança de 0 a 1 para cliente, responsavel, prioridade, prazo.
+3. Confiança de 0 a 1 para cliente, responsavel, prioridade, prazo, intencao.
 
-3. REGRAS DOS BLOCOS DE ANEXO (campo \`descricao_anexos\`):
+4. EXEMPLOS DE INTENÇÃO (capturas reais; siga o mesmo padrão):
+
+   ─ "criar" ─
+   Texto:  "Pedro, precisa criar uma landing pra Acme até sexta. É urgente."
+   intencao: "criar"  (não há referência a demanda existente)
+   titulo:    "Criar landing page da Acme"
+   prioridade: "urgente"
+   prazo:     próxima sexta a partir de ${args.isoDate}
+
+   ─ "editar" ─
+   Texto:  "A demanda das páginas de serviço da Acme agora tem prazo de
+            5 dias e é urgente. Cliente cobrou."
+   intencao: "editar"  (refere "A demanda ... agora tem...")
+   titulo:    "Atualizar páginas de serviço da Acme"
+   prazo:     ${args.isoDate} + 5 dias
+   prioridade: "urgente"
+
+   ─ "comentar" ─
+   Texto:  "Sobre a demanda de páginas da Acme, já fiz 2 de 10 páginas hoje."
+   intencao: "comentar"  (adiciona informação sem alterar campos)
+   titulo:    "Páginas de serviço da Acme"
+   descricao_principal: "Progresso: 2 de 10 páginas concluídas."
+
+5. REGRAS DOS BLOCOS DE ANEXO (campo \`descricao_anexos\`):
 
    Para cada anexo, gere um bloco em markdown conforme o tipo MIME. Use o
    NOME do arquivo informado (não invente nomes). Os blocos NÃO devem aparecer
@@ -567,9 +634,10 @@ INSTRUÇÕES:
      "descricao_anexos": null
    }
 
-4. Retorne APENAS JSON válido neste formato exato:
+6. Retorne APENAS JSON válido neste formato exato:
 
 {
+  "intencao": "criar | editar | comentar",
   "titulo": "string",
   "cliente": "string | null",
   "responsavel": "string | null",
@@ -583,7 +651,8 @@ INSTRUÇÕES:
     "cliente": 0.0,
     "responsavel": 0.0,
     "prioridade": 0.0,
-    "prazo": 0.0
+    "prazo": 0.0,
+    "intencao": 0.0
   }
 }
 
@@ -685,8 +754,23 @@ async function uploadStorageAttachmentToGemini(args: {
 }
 
 function validateRaw(e: RawExtraction): void {
+  // Intenção: default "criar" se IA esquecer o campo (versão antiga do app
+  // ou modelo que ignora a instrução nova).
+  if (e.intencao === undefined || e.intencao === null) {
+    e.intencao = "criar";
+  }
+  if (!["criar", "editar", "comentar"].includes(e.intencao)) {
+    throw new Error(`Intenção inválida: ${e.intencao}`);
+  }
   if (typeof e.titulo !== "string" || !e.titulo.trim()) {
     throw new Error("Campo titulo ausente ou vazio");
+  }
+  // Título: aceita 5–100 chars. Mais flexível que os 30-60 do prompt — se a
+  // captura é muito curta ("favicon"), 30 chars seria forçar invenção; se
+  // o user pediu algo bem específico, 60+ chars descritivo é OK.
+  const titleLen = e.titulo.trim().length;
+  if (titleLen < 5 || titleLen > 100) {
+    throw new Error(`Título com tamanho inválido (${titleLen} chars)`);
   }
   if (typeof e.descricao_principal !== "string" || !e.descricao_principal.trim()) {
     throw new Error("Campo descricao_principal ausente ou vazio");
@@ -709,9 +793,38 @@ function validateRaw(e: RawExtraction): void {
     throw new Error(`Infraestrutura inválida: ${e.infraestrutura}`);
   }
   if (!Array.isArray(e.tags)) throw new Error("Campo tags deve ser array");
+  // Coerce tags pra kebab-case mesmo se IA escapar (snake_case, espaços,
+  // PascalCase). Preferimos transformar a rejeitar — captura raramente falha
+  // por causa de uma tag mal formatada.
+  e.tags = e.tags
+    .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+    .map(toKebabCase)
+    .slice(0, 5);
+  // Prazo: aceita só YYYY-MM-DD ou null
+  if (e.prazo !== null && e.prazo !== undefined) {
+    if (typeof e.prazo !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.prazo)) {
+      throw new Error(`Prazo em formato inválido: ${e.prazo}`);
+    }
+  }
   if (!e.confianca || typeof e.confianca !== "object") {
     throw new Error("Campo confianca ausente");
   }
+  // confianca.intencao opcional — se a IA esquecer, assume 0.5 (neutra).
+  if (typeof (e.confianca as { intencao?: number }).intencao !== "number") {
+    (e.confianca as { intencao: number }).intencao = 0.5;
+  }
+}
+
+function toKebabCase(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // remove diacríticos
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-") // snake_case e espaços → hífen
+    .replace(/([a-z])([A-Z])/g, "$1-$2") // PascalCase → kebab
+    .replace(/[^a-z0-9-]/g, "") // só letras/dígitos/hífen
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 // Junta os dois campos da IA num único `descricao` antes de devolver ao
@@ -721,6 +834,7 @@ function mergeExtraction(r: RawExtraction): ExtractedDemand {
   const anexos = (r.descricao_anexos ?? "").trim();
   const descricao = anexos ? `${principal}\n\n---\n\n${anexos}` : principal;
   return {
+    intencao: r.intencao,
     titulo: r.titulo.trim(),
     cliente: r.cliente,
     responsavel: r.responsavel,

@@ -33,6 +33,7 @@ export function makeDemand(over: Partial<Demand> = {}): Demand {
     completed_at: null,
     created_at: "2026-06-06T10:00:00Z",
     updated_at: "2026-06-06T10:00:00Z",
+    updated_by: null,
     ...over,
   };
 }

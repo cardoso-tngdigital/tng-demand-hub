@@ -13,7 +13,6 @@
     "core:window:allow-start-dragging",
     "core:webview:allow-internal-toggle-devtools",
     "opener:default",
-    "global-shortcut:default",
     "notification:default",
     "updater:default",
     "process:default",
