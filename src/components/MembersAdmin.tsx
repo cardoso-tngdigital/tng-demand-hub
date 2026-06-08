@@ -108,9 +108,14 @@ export function MembersAdmin({
                 profile={p}
                 isSelf={p.id === currentUserId}
                 canEdit={amIAdmin && p.id !== currentUserId}
+                // Edição do nome tem regra mais ampla: o próprio user
+                // sempre pode alterar o próprio (RLS profiles_update_own),
+                // e o admin pode alterar de qualquer um.
+                canEditName={amIAdmin || p.id === currentUserId}
                 busy={busyId === p.id}
                 onToggleActive={() => void patchProfile(p.id, { active: !p.active })}
                 onChangeRole={(role) => void patchProfile(p.id, { role })}
+                onRename={(full_name) => void patchProfile(p.id, { full_name })}
               />
             ))}
           </ul>
@@ -124,17 +129,43 @@ function MemberRow({
   profile,
   isSelf,
   canEdit,
+  canEditName,
   busy,
   onToggleActive,
   onChangeRole,
+  onRename,
 }: {
   profile: Profile;
   isSelf: boolean;
   canEdit: boolean;
+  canEditName: boolean;
   busy: boolean;
   onToggleActive: () => void;
   onChangeRole: (role: UserRole) => void;
+  onRename: (fullName: string) => void;
 }) {
+  const [editingName, setEditingName] = useState(false);
+  const [draftName, setDraftName] = useState(profile.full_name);
+
+  // Quando o realtime / refresh traz nome novo (e não estamos editando),
+  // sincroniza o draft pro próximo "editar".
+  useEffect(() => {
+    if (!editingName) setDraftName(profile.full_name);
+  }, [profile.full_name, editingName]);
+
+  function commitName() {
+    const next = draftName.trim();
+    setEditingName(false);
+    if (!next || next === profile.full_name) {
+      setDraftName(profile.full_name);
+      return;
+    }
+    onRename(next);
+  }
+  function cancelEdit() {
+    setDraftName(profile.full_name);
+    setEditingName(false);
+  }
   const inactive = !profile.active;
   const disabled = busy || !canEdit;
   const disabledTitle = isSelf
@@ -151,9 +182,43 @@ function MemberRow({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-medium text-tng-marine-50">
-              {profile.full_name || "(sem nome)"}
-            </h3>
+            {editingName ? (
+              <input
+                autoFocus
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={commitName}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    (e.target as HTMLInputElement).blur();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelEdit();
+                  }
+                }}
+                disabled={busy}
+                className="min-w-0 max-w-xs flex-1 rounded-md border border-tng-orange-400/60 bg-tng-marine-800 px-2 py-0.5 text-sm font-medium text-tng-marine-50 focus:outline-none"
+              />
+            ) : (
+              <>
+                <h3 className="truncate text-sm font-medium text-tng-marine-50">
+                  {profile.full_name || "(sem nome)"}
+                </h3>
+                {canEditName && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingName(true)}
+                    disabled={busy}
+                    aria-label="Editar nome"
+                    title="Editar nome"
+                    className="text-[10px] text-tng-marine-400 hover:text-tng-orange-400 disabled:opacity-40"
+                  >
+                    <i className="fa-solid fa-pen" aria-hidden="true" />
+                  </button>
+                )}
+              </>
+            )}
             {isSelf && (
               <span className="rounded-full bg-tng-orange-400/15 px-2 py-0.5 text-[9px] uppercase tracking-wider text-tng-orange-300">
                 você

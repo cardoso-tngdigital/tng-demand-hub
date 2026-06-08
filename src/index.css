@@ -67,13 +67,16 @@
     height: 100%;
   }
 
-  /* Janela flutuante "capture" — body transparente para a borda arredondada
-     do .capture-shell aparecer. A classe é setada no <html> pelo App.tsx
-     quando getCurrentWindow().label === "capture". */
+  /* Janela flutuante "capture" — html/body/#root precisam ser totalmente
+     transparentes pra revelar a borda arredondada do shell. A classe é
+     setada no <html> pelo App.tsx quando getCurrentWindow().label ===
+     "capture". `!important` ajuda quando o Tailwind reset trouxer
+     background-color do body de novo via @layer base. */
   html.capture-window,
   html.capture-window body,
   html.capture-window #root {
-    background-color: transparent;
+    background: transparent !important;
+    background-color: transparent !important;
   }
 
   /* Inputs nativos do Tauri (drag region) */
