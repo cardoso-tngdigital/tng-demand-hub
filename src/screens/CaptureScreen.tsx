@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   createDemand,
   listDemands,
@@ -32,6 +33,7 @@ import {
   MAX_INLINE_TOTAL_BYTES,
   materializeAttachmentsForExtraction,
   pickFilesNative,
+  readPathsAsFiles,
   uploadAttachment,
   uploadAttachmentFromTmp,
   type PendingAttachment,
@@ -631,10 +633,7 @@ function InputView(props: {
   onManualSave: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // dragOver fica como false fixo enquanto drag-drop não é reabilitado
-  // (ver TODO acima). Mantemos a state pra preservar o setup do shell e
-  // facilitar o retorno quando a feature voltar.
-  const [dragOver] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   // Foca o textarea no mount e toda vez que a janela ganha foco — a
   // janela 'capture' do Tauri fica viva escondida entre invocações do
@@ -687,16 +686,66 @@ function InputView(props: {
     }
   }
 
-  // Drag-and-drop de arquivos externos está temporariamente desabilitado
-  // pra essa janela: o WKWebView do macOS abria o arquivo como conteúdo
-  // (preview de imagem com zoom, PDF com botões de página) e travava a
-  // janela inteira — só dava pra sair matando o processo. Setamos
-  // dragDropEnabled:true no tauri.conf.json pra o Tauri runtime
-  // interceptar o evento ANTES do webview ver, "comendo" o drop. UX fica:
-  // arrastar arquivo não anexa, mas a janela não trava. Usuário usa ⌘V
-  // (clipboard) ou o botão "escolha" — ambos funcionam.
-  // TODO(#83): reabilitar drag com listen("tauri://drag-drop") quando
-  // tivermos diagnóstico claro da regressão (versão do Tauri ou macOS).
+  // Drag-and-drop de arquivos via eventos do Tauri runtime
+  // (dragDropEnabled:true no tauri.conf.json). O Tauri intercepta o drop
+  // no nível do sistema, ANTES do WKWebView abrir o arquivo como
+  // conteúdo, e nos entrega os paths absolutos via 3 eventos:
+  //   - tauri://drag-enter / tauri://drag-leave: feedback visual
+  //   - tauri://drag-drop: paths absolutos pra ler via Rust
+  //
+  // Import estático + try/catch por listener — a tentativa anterior com
+  // dynamic import dentro de (async () => {})() engolia erros silenciosos
+  // e deixava a janela em estado inválido se algum listen() rejeitasse.
+  useEffect(() => {
+    const unlistens: UnlistenFn[] = [];
+    let cancelled = false;
+
+    async function setupListener<T = unknown>(
+      event: string,
+      handler: (payload: T) => void,
+    ) {
+      try {
+        const un = await listen<T>(event, (e) => handler(e.payload as T));
+        if (cancelled) {
+          un();
+        } else {
+          unlistens.push(un);
+        }
+      } catch (err) {
+        console.error(`[capture] listen("${event}") falhou:`, err);
+      }
+    }
+
+    void setupListener("tauri://drag-enter", () => setDragOver(true));
+    void setupListener("tauri://drag-leave", () => setDragOver(false));
+    void setupListener<{ paths: string[] }>(
+      "tauri://drag-drop",
+      async (payload) => {
+        setDragOver(false);
+        const paths = payload?.paths ?? [];
+        if (paths.length === 0) return;
+        try {
+          const { files, errors } = await readPathsAsFiles(paths);
+          if (files.length > 0) await props.onAddFiles(files);
+          if (errors.length > 0) props.onPickerError(errors.join(" · "));
+        } catch (err) {
+          console.error("[capture] readPathsAsFiles falhou:", err);
+        }
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      unlistens.forEach((un) => {
+        try {
+          un();
+        } catch {
+          /* ignore */
+        }
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handlePickFiles() {
     const { files, errors } = await pickFilesNative();
@@ -759,21 +808,26 @@ function InputView(props: {
 
         <div className="flex items-center justify-between border-t border-tng-marine-600/60 bg-tng-marine-800/40 px-5 py-2">
           <span className="text-[11px] text-tng-marine-300">
-            <i className="fa-solid fa-paperclip mr-1" aria-hidden="true" />{" "}
-            Cole (<kbd className="rounded bg-tng-marine-600 px-1 text-tng-marine-100">⌘V</kbd>) ou{" "}
-            <button
-              type="button"
-              onClick={() => void handlePickFiles()}
-              className="underline-offset-2 hover:underline focus:underline focus:outline-none"
-            >
-              escolha
-            </button>
-            <span className="ml-2 text-tng-marine-400">· Máx. 50MB por arquivo</span>
-            {props.attachments.length > 0 && (
-              <span className="ml-2 text-tng-marine-400">
-                · {props.attachments.length} anexo
-                {props.attachments.length > 1 ? "s" : ""}
-              </span>
+            {dragOver ? (
+              <span className="text-tng-orange-400">Solte para anexar…</span>
+            ) : (
+              <>
+                <i className="fa-solid fa-paperclip mr-1" aria-hidden="true" /> Cole, arraste arquivos ou{" "}
+                <button
+                  type="button"
+                  onClick={() => void handlePickFiles()}
+                  className="underline-offset-2 hover:underline focus:underline focus:outline-none"
+                >
+                  escolha
+                </button>
+                <span className="ml-2 text-tng-marine-400">· Máx. 50MB por arquivo</span>
+                {props.attachments.length > 0 && (
+                  <span className="ml-2 text-tng-marine-400">
+                    · {props.attachments.length} anexo
+                    {props.attachments.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </>
             )}
           </span>
         </div>
