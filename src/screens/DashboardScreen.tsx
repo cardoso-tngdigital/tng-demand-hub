@@ -35,12 +35,12 @@ type StatusFilter = DemandStatus | "all" | "overdue";
 type PriorityFilter = DemandPriority | "all";
 type RefFilter = string | "all" | "none";
 
-// Paleta de prioridade. "A fazer" agora é teal (verde-água) e
-// "Em andamento" é emerald — sem conflito com sky (média) e orange (alta).
+// Paleta de prioridade. Status agora usa só verdes (teal/emerald),
+// liberando azul e laranja-amarelo pra prioridade.
 const PRIORITY_DOT: Record<DemandPriority, string> = {
   baixa: "bg-tng-marine-400",
   media: "bg-sky-400",
-  alta: "bg-orange-400",
+  alta: "bg-amber-400",
   urgente: "bg-red-500",
 };
 
@@ -814,10 +814,12 @@ const INFRASTRUCTURE_BADGE: Record<DemandInfrastructure, { label: string; cls: s
   site_ia: { label: "Site IA", cls: "bg-violet-500/15 text-violet-300" },
 };
 
-// Renderiza TODOS os badges secundários do card em uma única linha:
-// responsável + infraestrutura + anexos + comentários. O badge de status
-// saiu — agora o status é mudado via StatusButtons (botões grandes
-// dedicados no rodapé do card).
+// Renderiza os badges secundários do card numa única linha, ancorada à
+// direita. Ordem visual (direita → esquerda): Responsável, Anexos,
+// Comentários, Infraestrutura. Usamos flex-row-reverse pra que a ordem
+// natural do JSX (primeiro = mais à direita) deixe o responsável fixo no
+// canto direito enquanto badges opcionais aparecem ao seu lado esquerdo.
+// O badge de status saiu — agora o status é mudado via StatusButtons.
 export function CardBadges({
   demand,
   assigneeName,
@@ -833,7 +835,7 @@ export function CardBadges({
     demand.comments_count > 0;
   if (!anything) return null;
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1.5">
+    <div className="flex flex-row-reverse flex-wrap items-center gap-1.5">
       {assigneeName && (
         <span
           className="flex items-center gap-1 rounded-full bg-tng-marine-700/80 px-1.5 py-0.5 text-[10px] text-tng-marine-100"
@@ -841,14 +843,6 @@ export function CardBadges({
         >
           <i className="fa-solid fa-user text-[9px]" aria-hidden="true" />
           {assigneeName}
-        </span>
-      )}
-      {infra && (
-        <span
-          className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${infra.cls}`}
-          title="Infraestrutura"
-        >
-          {infra.label}
         </span>
       )}
       {demand.attachments_count > 0 && (
@@ -867,6 +861,14 @@ export function CardBadges({
         >
           <i className="fa-solid fa-comment text-[9px]" aria-hidden="true" />
           {demand.comments_count}
+        </span>
+      )}
+      {infra && (
+        <span
+          className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${infra.cls}`}
+          title="Infraestrutura"
+        >
+          {infra.label}
         </span>
       )}
     </div>
@@ -891,8 +893,8 @@ const STATUS_TRACK: {
   {
     value: "todo",
     label: "A fazer",
-    active: "bg-teal-500/20 text-teal-200 border-teal-400",
-    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-teal-400/60 hover:text-teal-200",
+    active: "bg-transparent text-teal-300 border-teal-400",
+    inactive: "text-tng-marine-300 border-tng-marine-600 hover:border-teal-400/60 hover:text-teal-300",
   },
   {
     value: "doing",

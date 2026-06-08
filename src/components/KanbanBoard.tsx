@@ -15,7 +15,7 @@ const COLUMNS: { status: DemandStatus; label: string; accent: string }[] = [
 const PRIORITY_DOT: Record<DemandPriority, string> = {
   baixa: "bg-tng-marine-400",
   media: "bg-sky-400",
-  alta: "bg-orange-400",
+  alta: "bg-amber-400",
   urgente: "bg-red-500",
 };
 
