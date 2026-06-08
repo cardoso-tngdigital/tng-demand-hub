@@ -534,13 +534,13 @@ function InputView(props: {
 
   return (
     <div
-      className="flex h-screen items-center justify-center bg-transparent"
+      className="flex h-screen items-center justify-center bg-tng-marine-700"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <div
-        className={`flex h-full w-full flex-col overflow-hidden rounded-2xl border bg-tng-marine-700 transition ${
+        className={`flex h-full w-full flex-col overflow-hidden border bg-tng-marine-700 transition ${
           dragOver ? "border-tng-orange-400" : "border-tng-marine-600/60"
         }`}
       >
@@ -768,8 +768,8 @@ function ConfirmView(props: {
   }, [clientId, assigneeId, prioridade, prazo, titulo, descricao, tags, infraestrutura, props.onCancel]);
 
   return (
-    <div className="flex h-screen items-center justify-center bg-transparent">
-      <div className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-tng-marine-600/60 bg-tng-marine-700">
+    <div className="flex h-screen items-center justify-center bg-tng-marine-700">
+      <div className="flex h-full w-full flex-col overflow-hidden border border-tng-marine-600/60 bg-tng-marine-700">
         <div
           data-tauri-drag-region
           className="flex items-center justify-between border-b border-tng-marine-600/60 px-5 py-3"

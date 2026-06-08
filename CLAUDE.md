@@ -30,6 +30,8 @@ Documentos de referência (no diretório pai `../`):
 | Editor rich text | Tiptap 3 (`@tiptap/react` + StarterKit + Link + Placeholder) |
 | Sanitização HTML | isomorphic-dompurify |
 | Conversão markdown → HTML | `marked` (só para conteúdo legacy) |
+| Testes | Vitest 4 + jsdom + @testing-library/react + jest-dom |
+| Ícones | Font Awesome 6 (via kit script no `index.html`) |
 
 ## Identidade visual TNG
 
@@ -790,7 +792,111 @@ Concluído em 2026-06-06. Todos os follow-ups críticos do pré-beta
 fechados (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 item 16 descartado por baixa fricção real.
 
-### Sprint 11 — em stand-by (Beta Interno)
+## Sprint 11 — concluído (Refinamento visual + nome do produto)
+
+Concluído em 2026-06-07. Disparado por feedback de uso real e
+preparação visual pré-beta. Renomeado de "TNG Demand Hub" para
+**"TNG Sites — Demandas"** (productName no tauri.conf.json,
+package.json e título da janela main).
+
+### Infra de testes
+
+- Vitest 4 + jsdom + Testing Library configurado. Setup global em
+  `src/test/setup.ts` mocka cliente Supabase e plugins Tauri.
+  Factories em `src/test/factories.ts` (`makeDemand`, `makeClient`,
+  `makeProfile`, `makeComment`).
+- `npm test` = watch mode; `npm run test:run` = single shot (CI).
+  Não setar `watch: false` no config — quebra o `npm test` interativo.
+- CI em `.github/workflows/test.yml` roda `tsc --noEmit` +
+  `npm run test:run` em push/PR.
+- Mocks de componentes pesados: `RichTextEditor` (Tiptap) é
+  substituído por `<textarea>` em testes de Drawer/Comments via
+  `vi.mock`. Contrato testado é `value/onChange(html)/onBlur`.
+- 110 testes em 11 arquivos cobrindo `htmlContent`, `demandHistory`,
+  `attachments`, `comments`, `clients`, `notifications`,
+  `useDemandEditor`, `CardBadges`, `DemandDetailDrawer`,
+  `CommentsThread`, `MembersAdmin`.
+
+### Schema / dados
+
+- `clients` ganhou `google_business_url`, `drive_urls text[]`,
+  `whatsapp_group_url` (migration `20260607000001_client_links.sql`).
+  Renderizados no drawer como botões com ícone Font Awesome.
+- `demands` ganhou `infrastructure` (enum `wordpress` | `site_ia`,
+  migration `20260607000002_demand_infrastructure.sql`). IA preenche
+  via campo `infraestrutura` na resposta da Edge Function; editável
+  no drawer.
+- `comments` policy de delete trocada de "autor ou admin" para
+  **admin only** (migration `20260607000003_comments_admin_only_delete.sql`).
+- Histórico de demandas: tabela `demand_history` + triggers
+  (security definer) em `demands` (insert/update por campo),
+  `comments` (insert/delete) e `attachments` (insert). Migration
+  `20260607000004_demand_history.sql`. SELECT só pra admin (RLS).
+  Renderizado no drawer abaixo de Metadados, com "Ver mais" pra
+  expandir além dos 5 mais recentes. Bug de timezone em `due_date`
+  resolvido com regex `YYYY-MM-DD` em vez de `new Date(...)`.
+- `demands.attachments_count` denormalizada por trigger
+  (`20260607000005_demands_attachments_count.sql`); badge no card.
+
+### UX — Dashboard / cards
+
+- **Status como botões** (não mais select): 3 botões `A fazer` /
+  `Em andamento` / `Concluída` aparecem tanto no card da lista
+  quanto no header do drawer. Componente `StatusButtons` em
+  `DashboardScreen.tsx`. Paleta:
+  - todo: teal text + border, sem background
+  - doing: emerald border + text, sem background
+  - done: emerald background no hover/active (verde sólido)
+- **Prioridade**: `baixa` marine-400, `media` sky-400, `alta`
+  amber-400, `urgente` red-500. Decisão: laranja confundia com
+  status; amarelo `media` ficou ilegível — mantido sky.
+- **CardBadges com `flex-row-reverse`**: responsável é sempre
+  o mais à direita; badges opcionais (prioridade, cliente,
+  comentários, anexos) entram à esquerda dele.
+- **Stats neutros**: números em `text-tng-marine-50` (sem
+  cores quentes). "Atrasadas" tem ícone de atenção
+  (`fa-triangle-exclamation`) ao lado do número.
+- **"Ver concluídas"** vira filtro exclusivo na lista: clicar
+  esconde A Fazer/Em Andamento e mostra só done. Kanban sempre
+  exibe a coluna Concluída.
+- **Notificação ao concluir**: dispara para `assignee` e
+  `created_by` quando status muda pra `done`. Filtro
+  `wasLocalChange()` evita auto-notificar quem fez a mudança.
+- **Filtros como buttons**: substituídos os selects do header
+  por chips clicáveis (multi-select, com contador).
+
+### UX — janela flutuante de captura
+
+- Título sucinto: a IA agora gera `titulo` (verbo + objeto,
+  30-60 chars) além da descrição. Campo no `ConfirmView`.
+- Campo `Infraestrutura` editável no drawer e na captura
+  (preenchido pela IA).
+- **Janela retangular** (decisão de 2026-06-07): tentamos
+  `transparent: true` + `rounded-2xl` no shell HTML pra ter
+  bordas arredondadas estilo Claude. Em dev, o Tauri não recria
+  a janela ao mudar `transparent` no config, então o webview
+  fica opaco e vaza branco nos cantos. Em prod (`tauri build`)
+  funcionaria, mas o cardoso preferiu reverter pra simplicidade
+  visual: borda reta, sem `transparent`, sem `rounded-2xl`.
+
+### Ícones — Font Awesome
+
+- Migramos todos os ícones de emojis/caracteres pra Font Awesome
+  via kit script (`https://kit.fontawesome.com/8c3f2a40d0.js`)
+  carregado no `index.html`. Estilos `fa-solid` (padrão) e
+  `fa-brands` (WhatsApp, Google Drive, etc.) disponíveis.
+- Helper `categoryIconClass` em `src/lib/attachments.ts` mapeia
+  categorias de anexo → classe Font Awesome.
+
+### Admin
+
+- **Edição inline de nome** no `MembersAdmin`: botão lápis ao
+  lado de cada nome. Admin pode editar qualquer; user pode editar
+  próprio (RLS `profiles_update_own`). Enter salva via blur,
+  Escape cancela. Realtime / refresh sincroniza `draftName` quando
+  não está editando.
+
+### Sprint 12 — em stand-by (Beta Interno)
 
 Distribuição para a equipe TNG (~5 pessoas) decidida em 2026-06-06
 para ficar em stand-by até que o cardoso prossiga com outros temas.

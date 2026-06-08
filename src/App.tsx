@@ -28,13 +28,6 @@ function App() {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const label = getCurrentWindow().label;
         setWindowLabel(label);
-        // Janela capture é transparent:true no tauri.conf — body precisa
-        // ser transparente também pra revelar a borda arredondada. Marcamos
-        // como classe no <html> pra que o index.css aplique o estilo certo
-        // sem precisar mudar a árvore React.
-        if (label === "capture") {
-          document.documentElement.classList.add("capture-window");
-        }
       } catch (err) {
         console.error("[App] erro ao detectar janela:", err);
         setBootError(err instanceof Error ? err.message : String(err));
