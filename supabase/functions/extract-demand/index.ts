@@ -661,14 +661,32 @@ INSTRUÇÕES:
    descricao_principal: "Link do Figma: https://figma.com/abc"
    tags:      []
 
+   [E] Texto: "demanda da AM Advocacia já temos acesso ao domínio no registro.br"
+   intencao: "comentar"  (referência a demanda existente + verbo no
+                          presente perfeito "já temos" = atualização de
+                          status. NÃO É criação de demanda nova mesmo
+                          sem verbo claro de criar — "registro.br" é o
+                          contexto da demanda alvo, não a tarefa nova)
+   titulo:    "Apontamento de domínio para AM Advocacia"
+   descricao_principal: "Acesso ao domínio no registro.br já obtido."
+   tags:      []
+
    DICAS para decidir entre criar/editar/comentar:
-   - Verbo "criar/fazer/adicionar/desenvolver" + objeto novo → criar.
-   - Frase começa com "a demanda X..." OU "muda/altera/atualiza X" + valor
-     novo de campo (prazo, prioridade, responsável) → editar.
-   - Frase referencia demanda existente E acrescenta INFORMAÇÃO (progresso,
-     observação, link, status conversacional) → comentar.
-   - Em dúvida entre editar e comentar: se há valor novo pra UM CAMPO
-     específico → editar. Se é texto livre/observação → comentar.
+   - Verbo de criação ("criar", "fazer", "adicionar", "desenvolver",
+     "produzir") + objeto novo + sem referência a demanda anterior → criar.
+   - Frase começa com "demanda do/da [cliente]..." → quase nunca é criar.
+     Procura entre editar e comentar:
+       * Se diz valor novo pra um CAMPO (prazo, prioridade, responsável)
+         → editar.
+       * Se diz INFORMAÇÃO / progresso ("já temos", "já fiz", "aprovou",
+         "está em X", "tem o link Y") → comentar.
+   - "Muda/altera/atualiza X" + valor novo → editar.
+   - Capturas curtas mencionando cliente + estado/progresso ("feito 3 do
+     Bruning", "Acme aprovou") → comentar.
+   - Verbos no presente perfeito ("já temos", "já está", "já foi feito")
+     são sinal forte de comentar — descrevem estado, não criam tarefa.
+   - Em dúvida final: se há valor novo pra UM CAMPO específico → editar.
+     Se é texto livre/observação/progresso → comentar.
 
 5. REGRAS DOS BLOCOS DE ANEXO (campo \`descricao_anexos\`):
 
