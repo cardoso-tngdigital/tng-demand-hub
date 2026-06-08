@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -32,7 +33,6 @@ import {
   MAX_INLINE_TOTAL_BYTES,
   materializeAttachmentsForExtraction,
   pickFilesNative,
-  readPathsAsFiles,
   uploadAttachment,
   uploadAttachmentFromTmp,
   type PendingAttachment,
@@ -685,49 +685,25 @@ function InputView(props: {
     }
   }
 
-  // Drag-and-drop de arquivos externos via eventos do Tauri runtime —
-  // só funciona porque a janela `capture` tem `dragDropEnabled: true`
-  // no tauri.conf.json. O Tauri intercepta o drop no nível do sistema
-  // antes do WKWebView (macOS) tentar abrir o arquivo como conteúdo.
-  //
-  // O paths vêm com caminhos absolutos do disco; reaproveitamos o
-  // read_file_bytes pra construir File objects em memória — mesmo
-  // caminho que o picker nativo já usa.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    (async () => {
-      const { listen } = await import("@tauri-apps/api/event");
-      // Acumula os unlistens dos 4 eventos. Encerramento parcial é OK
-      // porque o webview da capture só existe enquanto a janela está
-      // viva (e este componente está montado).
-      const unEnter = await listen("tauri://drag-enter", () =>
-        setDragOver(true),
-      );
-      const unLeave = await listen("tauri://drag-leave", () =>
-        setDragOver(false),
-      );
-      const unDrop = await listen<{ paths: string[] }>(
-        "tauri://drag-drop",
-        async (event) => {
-          setDragOver(false);
-          const paths = event.payload?.paths ?? [];
-          if (paths.length === 0) return;
-          const { files, errors } = await readPathsAsFiles(paths);
-          if (files.length > 0) await props.onAddFiles(files);
-          if (errors.length > 0) props.onPickerError(errors.join(" · "));
-        },
-      );
-      unlisten = () => {
-        unEnter();
-        unLeave();
-        unDrop();
-      };
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    if (e.dataTransfer.types.includes("Files")) {
+      e.preventDefault();
+      setDragOver(true);
+    }
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragOver(false);
+  }
+
+  function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      void props.onAddFiles(e.dataTransfer.files);
+    }
+  }
 
   async function handlePickFiles() {
     const { files, errors } = await pickFilesNative();
@@ -741,7 +717,12 @@ function InputView(props: {
   const canSubmit = props.text.trim().length > 0;
 
   return (
-    <div className="flex h-screen items-center justify-center bg-tng-marine-700">
+    <div
+      className="flex h-screen items-center justify-center bg-tng-marine-700"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div
         className={`flex h-full w-full flex-col overflow-hidden border bg-tng-marine-700 transition ${
           dragOver ? "border-tng-orange-400" : "border-tng-marine-600/60"

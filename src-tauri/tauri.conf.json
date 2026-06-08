@@ -39,7 +39,7 @@
         "minimizable": false,
         "maximizable": false,
         "shadow": true,
-        "dragDropEnabled": true,
+        "dragDropEnabled": false,
         "url": "index.html#capture"
       }
     ],
