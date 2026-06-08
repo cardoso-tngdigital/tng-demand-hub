@@ -1,15 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  ALL_MODIFIERS,
+  HOTKEY_PRESETS,
+  acceleratorFromEvent,
   applyHotkeyToRust,
-  checkAccessibilityPermission,
   displayHotkey,
   getDefaultHotkey,
   getPlatform,
   getStoredHotkey,
-  modifierLabel,
+  isValidAccelerator,
   setStoredHotkey,
-  type HotkeyModifier,
 } from "../lib/hotkey";
 
 export function HotkeySettings({
@@ -20,51 +19,81 @@ export function HotkeySettings({
   onClose: () => void;
 }) {
   const platform = getPlatform();
-  const [selected, setSelected] = useState<HotkeyModifier>(() => getStoredHotkey());
+  const [current, setCurrent] = useState<string>(() => getStoredHotkey());
   const [error, setError] = useState<string | null>(null);
-  // Status da permissão Accessibility no macOS. null = ainda checando.
-  const [accessibility, setAccessibility] = useState<boolean | null>(null);
+  // Quando capturing=true, o div abaixo escuta keydown e monta combo.
+  const [capturing, setCapturing] = useState(false);
+  const [pendingCombo, setPendingCombo] = useState<string | null>(null);
+  const captureRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !capturing) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, capturing]);
 
-  // Checa permissão silenciosa quando o modal abre — não dispara prompt
-  // automático. O user clica "Solicitar permissão" pra disparar.
+  // Quando entra em modo de captura, foca o div pra receber keydown.
   useEffect(() => {
-    if (!open) return;
-    if (platform !== "macos") {
-      setAccessibility(true);
-      return;
-    }
-    void (async () => {
-      const ok = await checkAccessibilityPermission(false);
-      setAccessibility(ok);
-    })();
-  }, [open, platform]);
+    if (capturing) captureRef.current?.focus();
+  }, [capturing]);
 
   if (!open) return null;
 
-  async function pickModifier(mod: HotkeyModifier) {
+  async function applyAndStore(accel: string) {
     setError(null);
-    setSelected(mod);
-    setStoredHotkey(mod);
-    const err = await applyHotkeyToRust(mod);
-    if (err) setError(err);
+    const err = await applyHotkeyToRust(accel);
+    if (err) {
+      // Não persiste se Tauri rejeitou (ex.: combo em uso por outro app).
+      setError(
+        `Falha ao registrar atalho. Pode estar em uso por outro app. (${err})`,
+      );
+      return;
+    }
+    setStoredHotkey(accel);
+    setCurrent(accel);
+  }
+
+  function startCapture() {
+    setError(null);
+    setPendingCombo(null);
+    setCapturing(true);
+  }
+
+  function cancelCapture() {
+    setCapturing(false);
+    setPendingCombo(null);
+  }
+
+  async function commitCapture() {
+    if (!pendingCombo || !isValidAccelerator(pendingCombo)) return;
+    setCapturing(false);
+    await applyAndStore(pendingCombo);
+    setPendingCombo(null);
+  }
+
+  function handleCaptureKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelCapture();
+      return;
+    }
+    if (e.key === "Enter" && pendingCombo) {
+      e.preventDefault();
+      void commitCapture();
+      return;
+    }
+    e.preventDefault();
+    const accel = acceleratorFromEvent(e.nativeEvent);
+    if (accel) {
+      setPendingCombo(accel);
+    }
   }
 
   async function restoreDefault() {
-    await pickModifier(getDefaultHotkey(platform));
-  }
-
-  async function requestPermission() {
-    const ok = await checkAccessibilityPermission(true);
-    setAccessibility(ok);
+    await applyAndStore(getDefaultHotkey());
   }
 
   return (
@@ -73,7 +102,7 @@ export function HotkeySettings({
       onClick={onClose}
     >
       <div
-        className="w-[420px] max-w-[90vw] rounded-xl border border-tng-marine-600 bg-tng-marine-800 shadow-xl"
+        className="w-[460px] max-w-[92vw] rounded-xl border border-tng-marine-600 bg-tng-marine-800 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-tng-marine-700 px-5 py-3">
@@ -92,61 +121,72 @@ export function HotkeySettings({
 
         <div className="px-5 py-5">
           <p className="text-[11px] text-tng-marine-300">
-            Pressione a tecla escolhida <strong>duas vezes</strong> em
-            qualquer lugar do sistema para abrir a janela de captura.
+            Em qualquer lugar do sistema, pressione esta combinação para abrir
+            a janela de captura.
           </p>
 
-          <div className="my-5 flex flex-col items-center gap-2">
-            <div className="font-mono text-3xl tracking-widest text-tng-orange-400">
-              {displayHotkey(selected, platform)}
+          {capturing ? (
+            <div
+              ref={captureRef}
+              tabIndex={0}
+              onKeyDown={handleCaptureKeyDown}
+              onBlur={cancelCapture}
+              className="my-5 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-tng-orange-400/60 bg-tng-orange-400/5 py-7 outline-none"
+            >
+              <div className="font-mono text-3xl tracking-widest text-tng-orange-400">
+                {pendingCombo ? displayHotkey(pendingCombo, platform) : "…"}
+              </div>
+              <div className="text-[10px] uppercase tracking-wider text-tng-marine-300">
+                {pendingCombo
+                  ? "Enter pra salvar, Esc pra cancelar"
+                  : "Pressione a combinação desejada"}
+              </div>
             </div>
-            <div className="text-[10px] uppercase tracking-wider text-tng-marine-400">
-              {modifierLabel(selected, platform)} duas vezes
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            {ALL_MODIFIERS.map((mod) => {
-              const active = selected === mod;
-              return (
-                <button
-                  key={mod}
-                  type="button"
-                  onClick={() => void pickModifier(mod)}
-                  className={`rounded-md border px-3 py-2 text-xs transition ${
-                    active
-                      ? "border-tng-orange-400 bg-tng-orange-400/15 text-tng-orange-200"
-                      : "border-tng-marine-600 text-tng-marine-200 hover:border-tng-orange-400/60 hover:text-tng-marine-50"
-                  }`}
-                >
-                  <div className="font-mono text-base">
-                    {displayHotkey(mod, platform)}
-                  </div>
-                  <div className="mt-0.5 text-[10px] uppercase tracking-wider text-tng-marine-400">
-                    {modifierLabel(mod, platform)}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {platform === "macos" && accessibility === false && (
-            <div className="mt-4 rounded-md border border-tng-orange-400/40 bg-tng-orange-400/10 px-3 py-2 text-[11px] text-tng-orange-200">
-              <p className="font-medium">Permissão de Acessibilidade pendente</p>
-              <p className="mt-1 text-tng-orange-300/90">
-                Sem ela o macOS não permite que o app detecte teclas globais.
-                Abra <em>Ajustes do Sistema → Privacidade e Segurança →
-                Acessibilidade</em> e ative o TNG Sites — Demandas.
-              </p>
+          ) : (
+            <div className="my-5 flex flex-col items-center gap-2">
+              <div className="font-mono text-3xl tracking-widest text-tng-orange-400">
+                {displayHotkey(current, platform)}
+              </div>
               <button
                 type="button"
-                onClick={() => void requestPermission()}
-                className="mt-2 rounded bg-tng-orange-400/20 px-2 py-1 text-[10px] font-medium text-tng-orange-100 hover:bg-tng-orange-400/30"
+                onClick={startCapture}
+                className="rounded-md border border-tng-marine-600 px-3 py-1 text-[11px] text-tng-marine-100 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
               >
-                Solicitar permissão
+                <i className="fa-solid fa-pen mr-1.5" aria-hidden="true" />
+                Mudar atalho
               </button>
             </div>
           )}
+
+          <div className="mt-2">
+            <div className="mb-2 text-[10px] uppercase tracking-wider text-tng-marine-400">
+              Sugestões
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {HOTKEY_PRESETS.map((preset) => {
+                const active = preset.accelerator === current;
+                return (
+                  <button
+                    key={preset.accelerator}
+                    type="button"
+                    onClick={() => void applyAndStore(preset.accelerator)}
+                    className={`rounded-md border px-3 py-2 text-left text-xs transition ${
+                      active
+                        ? "border-tng-orange-400 bg-tng-orange-400/15 text-tng-orange-200"
+                        : "border-tng-marine-600 text-tng-marine-200 hover:border-tng-orange-400/60 hover:text-tng-marine-50"
+                    }`}
+                  >
+                    <div className="font-mono text-sm">
+                      {displayHotkey(preset.accelerator, platform)}
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-tng-marine-400">
+                      {preset.label}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {error && (
             <div className="mt-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">

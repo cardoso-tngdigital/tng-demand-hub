@@ -26,7 +26,7 @@ import { HotkeySettings } from "../components/HotkeySettings";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { OnboardingTour } from "../components/OnboardingTour";
 import { listAllProfiles } from "../lib/profiles";
-import { displayHotkey, getStoredHotkey, type HotkeyModifier } from "../lib/hotkey";
+import { displayHotkey, getStoredHotkey } from "../lib/hotkey";
 import type {
   Demand,
   DemandInfrastructure,
@@ -93,7 +93,7 @@ export function DashboardScreen() {
   const [aiUsageOpen, setAiUsageOpen] = useState(false);
   const [rulesAdminOpen, setRulesAdminOpen] = useState(false);
   const [hotkeySettingsOpen, setHotkeySettingsOpen] = useState(false);
-  const [currentHotkey, setCurrentHotkey] = useState<HotkeyModifier>(() =>
+  const [currentHotkey, setCurrentHotkey] = useState<string>(() =>
     getStoredHotkey(),
   );
   const [isAdmin, setIsAdmin] = useState(false);
@@ -1089,7 +1089,7 @@ function DemandCard({
   );
 }
 
-function EmptyState({ hotkey }: { hotkey: HotkeyModifier }) {
+function EmptyState({ hotkey }: { hotkey: string }) {
   const display = displayHotkey(hotkey);
   return (
     <div className="flex h-full flex-col items-center justify-center text-center">
