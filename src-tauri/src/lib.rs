@@ -2,29 +2,44 @@
 // TNG Sites — Demandas — Tauri Core
 // =============================================================================
 // Responsabilidades:
-// - Inicializar plugins (opener, notification, updater, process, dialog,
-//   global-shortcut).
-// - Registrar dinamicamente o atalho global da captura via comando
-//   set_capture_hotkey(accelerator). O frontend chama no boot e cada vez
-//   que o user troca de combinação no modal de configuração.
-// - Comandos: hide_capture_window, set_tray_badge, read_file_bytes,
-//   set_capture_hotkey.
-// - Tray icon com menu (Abrir / Nova captura / Sair).
+// - Plugins: opener, notification, updater, process, dialog, global-shortcut.
+// - Dois caminhos de atalho global da captura:
+//     * COMBO tradicional (Cmd+Shift+D etc.) via tauri-plugin-global-shortcut.
+//     * DUPLA PRESSÃO de tecla modificadora isolada (option+option, ctrl+ctrl
+//       etc.) via thread de polling com APIs nativas:
+//         - macOS:  core-graphics::CGEventSource::flags_state
+//         - Windows: winapi::GetAsyncKeyState
+//       Polling de 25ms em thread separada — sem main thread, sem CGEventTap
+//       event-driven (que crashava o rdev), sem permissão Accessibility extra.
 //
-// Sobre dupla pressão de tecla isolada (ctrl+ctrl, alt+alt etc.):
-// uma versão anterior tentava isso via crate rdev. No macOS, rdev::listen
-// só funciona corretamente quando chamado da main thread (usa CGEventTap +
-// CFRunLoop), e a main thread do Tauri já está ocupada pelo Builder::run.
-// Chamar de uma thread spawn provoca crash em qualquer keypress. Voltamos
-// pro plugin oficial do Tauri (combinação tradicional Cmd+Shift+X) que é
-// robusto e multiplataforma.
+// Frontend escolhe qual modo está ativo via comandos:
+//   - set_capture_hotkey(accelerator) — modo combo
+//   - set_capture_double_tap(modifier) — modo double-tap (None desliga)
+// O outro modo é desativado automaticamente.
 // =============================================================================
 
+use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::OnceLock;
+use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+
+// ---------------------------------------------------------------------------
+// Estado global do detector de dupla pressão
+// ---------------------------------------------------------------------------
+// Mode: 0 = desabilitado, 1 = ctrl, 2 = alt/option, 3 = shift, 4 = cmd/win.
+// AtomicU8 evita Mutex no caminho quente do polling.
+static DOUBLE_TAP_MODE: AtomicU8 = AtomicU8::new(0);
+// Timestamp ms-since-epoch da última pressão observada. -1 = nenhuma ainda.
+static LAST_PRESS_MS: AtomicI64 = AtomicI64::new(-1);
+
+// Janela máxima entre as duas pressões pra considerar "dupla". 400ms é
+// confortável e o que apps tipo Claude/Spotlight usam.
+const DOUBLE_PRESS_WINDOW_MS: i64 = 400;
+const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 // ---------------------------------------------------------------------------
 // Comandos do frontend
@@ -89,10 +104,8 @@ fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
         .unwrap_or_else(|| "Falha desconhecida ao ler arquivo".to_string()))
 }
 
-// Re-registra dinamicamente o atalho da captura. Frontend chama no boot
-// (com o accelerator salvo em localStorage) e cada vez que o user troca
-// no modal de configuração. Aceita formato do Tauri global-shortcut:
-// "CmdOrCtrl+Shift+D", "Cmd+Shift+Space", "F12", "Alt+G", etc.
+// Modo COMBO. Frontend chama no boot e sempre que o user muda. Ao ativar
+// um combo, desliga o detector de double-tap.
 #[cfg(desktop)]
 #[tauri::command]
 fn set_capture_hotkey(
@@ -101,15 +114,151 @@ fn set_capture_hotkey(
 ) -> Result<(), String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let gs = app.global_shortcut();
-    // Sempre limpa o registrado anterior — só um atalho vivo por vez.
     let _ = gs.unregister_all();
-    gs.register(accelerator.as_str()).map_err(|e| e.to_string())
+    gs.register(accelerator.as_str()).map_err(|e| e.to_string())?;
+    DOUBLE_TAP_MODE.store(0, Ordering::SeqCst);
+    LAST_PRESS_MS.store(-1, Ordering::SeqCst);
+    Ok(())
 }
 
 #[cfg(not(desktop))]
 #[tauri::command]
 fn set_capture_hotkey(_app: tauri::AppHandle, _accelerator: String) -> Result<(), String> {
     Err("Atalho global não suportado nesta plataforma".to_string())
+}
+
+// Modo DOUBLE-TAP. Aceita "ctrl" | "alt"/"option" | "shift" | "cmd"/"command".
+// Passar None/null/"" desliga o detector e cai pro combo.
+#[cfg(desktop)]
+#[tauri::command]
+fn set_capture_double_tap(
+    app: tauri::AppHandle,
+    modifier: Option<String>,
+) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let mode = match modifier.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => 0,
+        Some(m) => match m.to_lowercase().as_str() {
+            "ctrl" | "control" => 1,
+            "alt" | "option" => 2,
+            "shift" => 3,
+            "cmd" | "command" | "meta" | "win" | "super" => 4,
+            other => return Err(format!("Modificador inválido: {}", other)),
+        },
+    };
+
+    if mode == 0 {
+        DOUBLE_TAP_MODE.store(0, Ordering::SeqCst);
+        return Ok(());
+    }
+
+    // Ativando double-tap: desliga combo pra não disparar duplo.
+    let _ = app.global_shortcut().unregister_all();
+    LAST_PRESS_MS.store(-1, Ordering::SeqCst);
+    DOUBLE_TAP_MODE.store(mode, Ordering::SeqCst);
+    Ok(())
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn set_capture_double_tap(
+    _app: tauri::AppHandle,
+    _modifier: Option<String>,
+) -> Result<(), String> {
+    Err("Atalho global não suportado nesta plataforma".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Detector de dupla pressão — polling em thread separada
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+fn modifier_pressed(mode: u8) -> bool {
+    use core_graphics::event::CGEventFlags;
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    // HIDSystemState reflete o estado físico do hardware no momento — não
+    // exige Accessibility (é uma query estática, não captura de eventos).
+    let flags = CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState);
+    match mode {
+        1 => flags.contains(CGEventFlags::CGEventFlagControl),
+        2 => flags.contains(CGEventFlags::CGEventFlagAlternate), // Option
+        3 => flags.contains(CGEventFlags::CGEventFlagShift),
+        4 => flags.contains(CGEventFlags::CGEventFlagCommand),
+        _ => false,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn modifier_pressed(mode: u8) -> bool {
+    use winapi::um::winuser::{
+        GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+    let key = match mode {
+        1 => VK_CONTROL,
+        2 => VK_MENU, // Alt
+        3 => VK_SHIFT,
+        4 => VK_LWIN, // checa LWin; cobrimos RWin abaixo
+        _ => return false,
+    };
+    let down = unsafe { (GetAsyncKeyState(key as i32) as u16 & 0x8000) != 0 };
+    if mode == 4 && !down {
+        let r = unsafe { (GetAsyncKeyState(VK_RWIN as i32) as u16 & 0x8000) != 0 };
+        return r;
+    }
+    down
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn modifier_pressed(_mode: u8) -> bool {
+    // Linux: não suportado por enquanto. Polling de modifier global em X11/Wayland
+    // exige bibliotecas específicas (XKB/libinput) que ainda não integramos.
+    false
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+// Handle salvo no setup pra que a thread de polling possa mostrar a janela.
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+fn spawn_double_tap_watcher() {
+    std::thread::spawn(|| {
+        let mut was_pressed = false;
+        loop {
+            std::thread::sleep(POLL_INTERVAL);
+            let mode = DOUBLE_TAP_MODE.load(Ordering::Relaxed);
+            if mode == 0 {
+                was_pressed = false;
+                continue;
+            }
+            let is_pressed = modifier_pressed(mode);
+            // Detecta APENAS a transição "estava solto → ficou pressionado".
+            // Auto-repeat do SO não afeta porque continuamos olhando state
+            // físico, não eventos KeyPress.
+            if is_pressed && !was_pressed {
+                let now = now_ms();
+                let last = LAST_PRESS_MS.load(Ordering::Relaxed);
+                if last >= 0 && (now - last) < DOUBLE_PRESS_WINDOW_MS {
+                    // Dupla pressão! Mostra a captura.
+                    LAST_PRESS_MS.store(-1, Ordering::SeqCst);
+                    if let Some(app) = APP_HANDLE.get() {
+                        let app2 = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            show_capture_window(&app2);
+                        });
+                    }
+                } else {
+                    LAST_PRESS_MS.store(now, Ordering::SeqCst);
+                }
+            }
+            was_pressed = is_pressed;
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -149,11 +298,9 @@ pub fn run() {
             set_tray_badge,
             read_file_bytes,
             set_capture_hotkey,
+            set_capture_double_tap,
         ]);
 
-    // Plugin de atalho global (apenas desktop). Sem with_shortcuts: o atalho
-    // é registrado dinamicamente pelo frontend via set_capture_hotkey no
-    // boot. Handler único — qualquer atalho ativo dispara show_capture_window.
     #[cfg(desktop)]
     {
         builder = builder.plugin(
@@ -170,6 +317,12 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            // Guarda o handle pra thread de polling poder mostrar janelas.
+            let _ = APP_HANDLE.set(app.handle().clone());
+            // Watcher de double-tap roda o tempo todo. Quando mode=0, é
+            // basicamente um sleep loop (sem custo de leitura do estado).
+            spawn_double_tap_watcher();
+
             // -----------------------------------------------------------------
             // Tray Icon — ícone na bandeja do sistema
             // -----------------------------------------------------------------

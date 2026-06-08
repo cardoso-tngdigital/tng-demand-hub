@@ -20,8 +20,16 @@
 
 export type Platform = "macos" | "windows" | "linux";
 
+export type HotkeyMode = "combo" | "double-tap";
+export type DoubleTapModifier = "ctrl" | "alt" | "shift" | "cmd";
+
 const STORAGE_KEY = "tng:hotkey:capture";
+const STORAGE_MODE = "tng:hotkey:mode";
+const STORAGE_DOUBLE_TAP = "tng:hotkey:double-tap";
 export const DEFAULT_HOTKEY = "CmdOrCtrl+Shift+D";
+// Default da dupla pressão: Option (Alt) no Mac, Alt no Windows — mesma
+// tecla que o Claude Desktop usa.
+export const DEFAULT_DOUBLE_TAP: DoubleTapModifier = "alt";
 
 const MODIFIERS = new Set([
   "CmdOrCtrl",
@@ -216,6 +224,121 @@ export async function applyHotkeyToRust(accel: string): Promise<string | null> {
     return null;
   } catch (err) {
     console.error("[hotkey] set_capture_hotkey falhou:", err);
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Modo dupla pressão (option+option, ctrl+ctrl, etc.)
+// ---------------------------------------------------------------------------
+
+export function isDoubleTapModifier(v: unknown): v is DoubleTapModifier {
+  return v === "ctrl" || v === "alt" || v === "shift" || v === "cmd";
+}
+
+export function getHotkeyMode(): HotkeyMode {
+  try {
+    const v = localStorage.getItem(STORAGE_MODE);
+    return v === "double-tap" ? "double-tap" : "combo";
+  } catch {
+    return "combo";
+  }
+}
+
+export function setHotkeyMode(mode: HotkeyMode): void {
+  try {
+    localStorage.setItem(STORAGE_MODE, mode);
+  } catch (err) {
+    console.error("[hotkey] setHotkeyMode falhou:", err);
+  }
+}
+
+export function getStoredDoubleTap(): DoubleTapModifier {
+  try {
+    const v = localStorage.getItem(STORAGE_DOUBLE_TAP);
+    if (isDoubleTapModifier(v)) return v;
+  } catch {
+    // storage indisponível
+  }
+  return DEFAULT_DOUBLE_TAP;
+}
+
+export function setStoredDoubleTap(mod: DoubleTapModifier): void {
+  try {
+    localStorage.setItem(STORAGE_DOUBLE_TAP, mod);
+  } catch (err) {
+    console.error("[hotkey] setStoredDoubleTap falhou:", err);
+  }
+}
+
+export const ALL_DOUBLE_TAP_MODIFIERS: DoubleTapModifier[] = [
+  "ctrl",
+  "alt",
+  "shift",
+  "cmd",
+];
+
+// Display da dupla pressão: símbolo Mac repetido (⌥⌥) ou texto Win/Linux.
+export function displayDoubleTap(
+  mod: DoubleTapModifier,
+  platform: Platform = getPlatform(),
+): string {
+  if (platform === "macos") {
+    const sym: Record<DoubleTapModifier, string> = {
+      ctrl: "⌃",
+      alt: "⌥",
+      shift: "⇧",
+      cmd: "⌘",
+    };
+    return `${sym[mod]}${sym[mod]}`;
+  }
+  const name = doubleTapLabel(mod, platform);
+  return `${name} ${name}`;
+}
+
+// Nome longo do modificador, próprio da plataforma.
+export function doubleTapLabel(
+  mod: DoubleTapModifier,
+  platform: Platform = getPlatform(),
+): string {
+  if (platform === "macos") {
+    return { ctrl: "Control", alt: "Option", shift: "Shift", cmd: "Command" }[mod];
+  }
+  if (platform === "windows") {
+    return { ctrl: "Ctrl", alt: "Alt", shift: "Shift", cmd: "Win" }[mod];
+  }
+  return { ctrl: "Ctrl", alt: "Alt", shift: "Shift", cmd: "Super" }[mod];
+}
+
+// Display do atalho atual (combo OU dupla pressão), pra mostrar no header.
+export function getCurrentHotkeyDisplay(
+  platform: Platform = getPlatform(),
+): string {
+  if (getHotkeyMode() === "double-tap") {
+    return displayDoubleTap(getStoredDoubleTap(), platform);
+  }
+  return displayHotkey(getStoredHotkey(), platform);
+}
+
+// Aplica a configuração ATUAL (mode + valor) no Rust. Chamar no boot e
+// depois de qualquer mudança no modal. Garante que só o modo certo está
+// ativo — o Rust desliga o outro automaticamente.
+export async function applyHotkey(): Promise<string | null> {
+  if (getHotkeyMode() === "double-tap") {
+    return applyDoubleTapToRust(getStoredDoubleTap());
+  }
+  return applyHotkeyToRust(getStoredHotkey());
+}
+
+export async function applyDoubleTapToRust(
+  modifier: DoubleTapModifier | null,
+): Promise<string | null> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_capture_double_tap", { modifier });
+    return null;
+  } catch (err) {
+    console.error("[hotkey] set_capture_double_tap falhou:", err);
     return err instanceof Error ? err.message : String(err);
   }
 }

@@ -26,7 +26,7 @@ import { HotkeySettings } from "../components/HotkeySettings";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { OnboardingTour } from "../components/OnboardingTour";
 import { listAllProfiles } from "../lib/profiles";
-import { displayHotkey, getStoredHotkey } from "../lib/hotkey";
+import { getCurrentHotkeyDisplay } from "../lib/hotkey";
 import type {
   Demand,
   DemandInfrastructure,
@@ -94,7 +94,7 @@ export function DashboardScreen() {
   const [rulesAdminOpen, setRulesAdminOpen] = useState(false);
   const [hotkeySettingsOpen, setHotkeySettingsOpen] = useState(false);
   const [currentHotkey, setCurrentHotkey] = useState<string>(() =>
-    getStoredHotkey(),
+    getCurrentHotkeyDisplay(),
   );
   const [isAdmin, setIsAdmin] = useState(false);
   // Nome de exibição do user atual — preferimos full_name a email no header
@@ -446,7 +446,7 @@ export function DashboardScreen() {
             title="Configurar atalho da captura"
           >
             <i className="fa-solid fa-keyboard mr-1.5" aria-hidden="true" />
-            <span className="font-mono">{displayHotkey(currentHotkey)}</span>
+            <span className="font-mono">{currentHotkey}</span>
           </button>
           <span
             className="text-xs text-tng-marine-300"
@@ -600,7 +600,7 @@ export function DashboardScreen() {
         open={hotkeySettingsOpen}
         onClose={() => {
           setHotkeySettingsOpen(false);
-          setCurrentHotkey(getStoredHotkey());
+          setCurrentHotkey(getCurrentHotkeyDisplay());
         }}
       />
 
@@ -1090,17 +1090,16 @@ function DemandCard({
 }
 
 function EmptyState({ hotkey }: { hotkey: string }) {
-  const display = displayHotkey(hotkey);
   return (
     <div className="flex h-full flex-col items-center justify-center text-center">
       <div className="rounded-full border border-tng-marine-600 bg-tng-marine-800/40 px-3 py-1.5 font-mono text-xs text-tng-marine-200">
-        {display}
+        {hotkey}
       </div>
       <h2 className="mt-4 font-sans text-lg font-semibold text-tng-marine-50">
         Nenhuma demanda ainda
       </h2>
       <p className="mt-2 max-w-sm text-sm text-tng-marine-300">
-        Pressione <span className="font-mono text-tng-orange-400">{display}</span>{" "}
+        Pressione <span className="font-mono text-tng-orange-400">{hotkey}</span>{" "}
         em qualquer lugar para registrar a primeira captura da equipe.
       </p>
     </div>

@@ -2,10 +2,17 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_HOTKEY,
   acceleratorFromEvent,
+  displayDoubleTap,
   displayHotkey,
+  doubleTapLabel,
   getDefaultHotkey,
+  getHotkeyMode,
+  getStoredDoubleTap,
   getStoredHotkey,
+  isDoubleTapModifier,
   isValidAccelerator,
+  setHotkeyMode,
+  setStoredDoubleTap,
   setStoredHotkey,
 } from "./hotkey";
 
@@ -124,5 +131,55 @@ describe("storage", () => {
   it("ignora valores inválidos no storage", () => {
     localStorage.setItem("tng:hotkey:capture", "bogus_no_plus");
     expect(getStoredHotkey()).toBe(DEFAULT_HOTKEY);
+  });
+});
+
+describe("double-tap", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it("isDoubleTapModifier valida só os 4 conhecidos", () => {
+    expect(isDoubleTapModifier("ctrl")).toBe(true);
+    expect(isDoubleTapModifier("alt")).toBe(true);
+    expect(isDoubleTapModifier("shift")).toBe(true);
+    expect(isDoubleTapModifier("cmd")).toBe(true);
+    expect(isDoubleTapModifier("CTRL")).toBe(false);
+    expect(isDoubleTapModifier("super")).toBe(false);
+    expect(isDoubleTapModifier(null)).toBe(false);
+  });
+
+  it("displayDoubleTap repete o símbolo no macOS", () => {
+    expect(displayDoubleTap("alt", "macos")).toBe("⌥⌥");
+    expect(displayDoubleTap("ctrl", "macos")).toBe("⌃⌃");
+    expect(displayDoubleTap("cmd", "macos")).toBe("⌘⌘");
+    expect(displayDoubleTap("shift", "macos")).toBe("⇧⇧");
+  });
+
+  it("displayDoubleTap usa nome repetido no Windows", () => {
+    expect(displayDoubleTap("alt", "windows")).toBe("Alt Alt");
+    expect(displayDoubleTap("cmd", "windows")).toBe("Win Win");
+  });
+
+  it("doubleTapLabel usa Option no macOS", () => {
+    expect(doubleTapLabel("alt", "macos")).toBe("Option");
+    expect(doubleTapLabel("cmd", "macos")).toBe("Command");
+  });
+
+  it("getStoredDoubleTap default = alt", () => {
+    expect(getStoredDoubleTap()).toBe("alt");
+  });
+
+  it("setStoredDoubleTap persiste e lê de volta", () => {
+    setStoredDoubleTap("cmd");
+    expect(getStoredDoubleTap()).toBe("cmd");
+  });
+
+  it("getHotkeyMode default = combo", () => {
+    expect(getHotkeyMode()).toBe("combo");
+  });
+
+  it("setHotkeyMode persiste double-tap", () => {
+    setHotkeyMode("double-tap");
+    expect(getHotkeyMode()).toBe("double-tap");
   });
 });
