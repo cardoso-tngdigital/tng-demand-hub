@@ -664,9 +664,7 @@ INSTRUÇÕES:
    [E] Texto: "demanda da AM Advocacia já temos acesso ao domínio no registro.br"
    intencao: "comentar"  (referência a demanda existente + verbo no
                           presente perfeito "já temos" = atualização de
-                          status. NÃO É criação de demanda nova mesmo
-                          sem verbo claro de criar — "registro.br" é o
-                          contexto da demanda alvo, não a tarefa nova)
+                          status. NÃO É criação de demanda nova)
    titulo:    "Apontamento de domínio para AM Advocacia"
    descricao_principal: "Acesso ao domínio no registro.br já obtido."
    tags:      []

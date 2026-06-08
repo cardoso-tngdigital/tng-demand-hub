@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -684,43 +685,44 @@ function InputView(props: {
     }
   }
 
-  // Drag-and-drop é registrado direto no `window` em vez do React DOM da
-  // janela. Em Tauri+macOS, o `data-tauri-drag-region` do header e/ou o
-  // webview WKWebView às vezes interceptam o drag antes do React conseguir
-  // ver — o handler React ficava silenciado em produção. Listener no
-  // window pega o evento na captura, antes de qualquer drag-region.
+  // Bloqueio de default do webview em fase de captura. Sem isso, o
+  // WKWebView (macOS) trata arquivos arrastados pra dentro da página como
+  // "abrir como conteúdo" — mostra preview/zoom da imagem ou do PDF e o
+  // React handler nem chega a ver o evento. capture:true garante que esse
+  // preventDefault rode ANTES de qualquer handler default ou do React.
+  // Só esse bloqueio basta — os handlers do <div> abaixo cuidam do "drop"
+  // de fato sem disputar com o webview.
   useEffect(() => {
-    function onDragOver(e: globalThis.DragEvent) {
-      // preventDefault incondicional — sem isso o webview não dispara drop.
+    function block(e: globalThis.DragEvent) {
       e.preventDefault();
-      // dataTransfer pode estar restrito durante o dragover (não consegue
-      // ler `files` ainda), mas `types` costuma indicar "Files" pro feedback.
-      if (e.dataTransfer?.types.includes("Files")) {
-        setDragOver(true);
-      }
     }
-    function onDrop(e: globalThis.DragEvent) {
-      e.preventDefault();
-      setDragOver(false);
-      const files = e.dataTransfer?.files;
-      if (files && files.length > 0) {
-        void props.onAddFiles(files);
-      }
-    }
-    function onDragLeave(e: globalThis.DragEvent) {
-      // Só limpa quando o cursor sai da janela inteira (relatedTarget null).
-      if (!e.relatedTarget) setDragOver(false);
-    }
-    window.addEventListener("dragover", onDragOver);
-    window.addEventListener("drop", onDrop);
-    window.addEventListener("dragleave", onDragLeave);
+    document.addEventListener("dragover", block, { capture: true });
+    document.addEventListener("drop", block, { capture: true });
     return () => {
-      window.removeEventListener("dragover", onDragOver);
-      window.removeEventListener("drop", onDrop);
-      window.removeEventListener("dragleave", onDragLeave);
+      document.removeEventListener("dragover", block, { capture: true });
+      document.removeEventListener("drop", block, { capture: true });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    if (e.dataTransfer.types.includes("Files")) {
+      setDragOver(true);
+    }
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragOver(false);
+  }
+
+  function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      void props.onAddFiles(e.dataTransfer.files);
+    }
+  }
 
   async function handlePickFiles() {
     const { files, errors } = await pickFilesNative();
@@ -734,7 +736,12 @@ function InputView(props: {
   const canSubmit = props.text.trim().length > 0;
 
   return (
-    <div className="flex h-screen items-center justify-center bg-tng-marine-700">
+    <div
+      className="flex h-screen items-center justify-center bg-tng-marine-700"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div
         className={`flex h-full w-full flex-col overflow-hidden border bg-tng-marine-700 transition ${
           dragOver ? "border-tng-orange-400" : "border-tng-marine-600/60"
