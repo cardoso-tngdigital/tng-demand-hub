@@ -15,7 +15,10 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    // Porta trocada de 1420 pra 5173 em 2026-06-08: a 1420 ficou em
+    // estado inutilizável (Vite não startava nem com lsof/pkill — algum
+    // processo zumbi ou bloqueio do macOS segurava ela em silêncio).
+    port: 5173,
     strictPort: true,
     // Força IPv4 (127.0.0.1) para evitar conflito IPv4/IPv6 no macOS
     // que faz o webview do Tauri dar timeout ao acessar "localhost".
@@ -24,7 +27,7 @@ export default defineConfig(async () => ({
       ? {
           protocol: "ws",
           host,
-          port: 1421,
+          port: 5174,
         }
       : undefined,
     watch: {
