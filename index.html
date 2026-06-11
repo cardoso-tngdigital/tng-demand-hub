@@ -3,27 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="/logo-icone.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <!-- Font Awesome kit — usado em badges, links e ações da UI no lugar
-         de emojis. CSP da app é null (ver tauri.conf.json), então o script
-         injeta CSS + fontes sem bloqueio.
-
-         autoReplaceSvg: false força o Kit a usar webfont em vez de
-         transformar <i> em <svg>. Sem isso, o Kit observa o DOM e troca
-         os <i> por <svg> em runtime — qualquer mudança condicional no
-         React (ex.: { showSomething ? <i/> : null }) gera NotFoundError
-         porque o React tenta operar num <i> que já virou <svg>. O erro
-         cascateia e quebra outros effects do React (incluindo nossos
-         listeners do tauri://drag-drop). -->
-    <script>
-      window.FontAwesomeConfig = { autoReplaceSvg: false };
-    </script>
-    <script src="https://kit.fontawesome.com/8c3f2a40d0.js" crossorigin="anonymous"></script>
     <title>TNG Sites — Demandas</title>
   </head>
 

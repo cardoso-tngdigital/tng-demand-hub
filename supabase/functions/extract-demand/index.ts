@@ -634,6 +634,13 @@ INSTRUÇÕES:
    responsavel: "Pedro"
    tags:      []
 
+   [D] Texto: "anexa esse print na demanda do banner da Acme"  + 1 imagem
+   intencao: "editar"  (anexar arquivo a demanda existente = editar; anexos
+                        NUNCA vão pra comentários neste sistema)
+   titulo:    "Banner da Acme"
+   prazo:     null
+   tags:      []
+
    ─ "comentar" (4 exemplos — incluindo casos curtos comuns) ─
 
    [A] Texto: "Sobre a demanda de páginas da Acme, já fiz 2 de 10 páginas hoje."
@@ -670,6 +677,11 @@ INSTRUÇÕES:
    tags:      []
 
    DICAS para decidir entre criar/editar/comentar:
+   - REGRA FORTE: se a captura tem ANEXO (imagem, áudio, vídeo, PDF, arquivo)
+     E referencia uma demanda EXISTENTE (verbos como "anexa", "junta",
+     "adiciona", "vai pra", "manda pra" + nome de cliente/demanda) →
+     SEMPRE intencao: "editar". Nunca "comentar". Anexos só ficam
+     vinculados à demanda neste sistema; comentários não suportam arquivos.
    - Verbo de criação ("criar", "fazer", "adicionar", "desenvolver",
      "produzir") + objeto novo + sem referência a demanda anterior → criar.
    - Frase começa com "demanda do/da [cliente]..." → quase nunca é criar.

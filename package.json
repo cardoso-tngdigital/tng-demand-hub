@@ -1,17 +1,16 @@
 {
   "name": "tng-demand-hub",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "test": "vitest",
-    "test:run": "vitest run"
+    "tauri": "tauri"
   },
   "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.2.0",
     "@supabase/supabase-js": "^2.107.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/api": "^2",
@@ -37,16 +36,10 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "@testing-library/dom": "^10.4.1",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react-swc": "^4.3.1",
-    "jsdom": "^29.1.1",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "vitest": "^4.1.8"
+    "vite": "^7.0.4"
   }
 }

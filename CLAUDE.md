@@ -31,7 +31,7 @@ Documentos de referência (no diretório pai `../`):
 | Sanitização HTML | isomorphic-dompurify |
 | Conversão markdown → HTML | `marked` (só para conteúdo legacy) |
 | Testes | Vitest 4 + jsdom + @testing-library/react + jest-dom |
-| Ícones | Font Awesome 6 (via kit script no `index.html`) |
+| Ícones | Font Awesome 6 (via `@fortawesome/fontawesome-free`, CSS+webfont importado no `main.tsx`) |
 
 ## Identidade visual TNG
 
@@ -882,11 +882,23 @@ package.json e título da janela main).
 ### Ícones — Font Awesome
 
 - Migramos todos os ícones de emojis/caracteres pra Font Awesome
-  via kit script (`https://kit.fontawesome.com/8c3f2a40d0.js`)
-  carregado no `index.html`. Estilos `fa-solid` (padrão) e
-  `fa-brands` (WhatsApp, Google Drive, etc.) disponíveis.
+  via pacote npm `@fortawesome/fontawesome-free`. O CSS é importado
+  em `src/main.tsx` (`@fortawesome/fontawesome-free/css/all.min.css`)
+  e usa webfont — zero manipulação de DOM em runtime. Estilos
+  `fa-solid` (padrão) e `fa-brands` (WhatsApp, Google Drive, etc.)
+  disponíveis.
 - Helper `categoryIconClass` em `src/lib/attachments.ts` mapeia
   categorias de anexo → classe Font Awesome.
+
+**Histórico (2026-06-08):** Inicialmente usávamos o Kit Font Awesome
+(`https://kit.fontawesome.com/...js`) que injeta CSS + transforma
+`<i>` em `<svg>` em runtime via MutationObserver. Isso causava
+`NotFoundError: The object can not be found here.` no React 19
+quando elementos `<i>` em renders condicionais eram desmontados —
+o React tentava operar num `<i>` que o Kit já tinha trocado por
+`<svg>`. O erro cascateava e quebrava outros effects (incluindo
+listeners de `tauri://drag-drop`). A migração pro pacote npm
+eliminou a manipulação de DOM e fechou todo esse vetor.
 
 ### Admin
 
@@ -896,10 +908,258 @@ package.json e título da janela main).
   Escape cancela. Realtime / refresh sincroniza `draftName` quando
   não está editando.
 
-### Sprint 12 — em stand-by (Beta Interno)
+## Sprint 12 — em andamento (Polimento pré-beta)
+
+Sessão de polimento entre 2026-06-08 e 2026-06-10 antes de
+distribuir pro time. Foco em qualidade da IA e UX da captura.
+
+### Refinamentos da IA na captura
+
+- ✅ **Refinar prompt da IA (#82) — 2026-06-08.** Título da demanda
+  agora inclui o cliente quando identificado ("Banner da Bruning
+  Homes" em vez de só "Banner"). Adicionados mais few-shots no
+  prompt cobrindo casos curtos comuns ("feito 3 do Bruning", "Acme
+  aprovou") pra reduzir falsos "criar". Edge Function `extract-demand`.
+
+- ✅ **Anexos no modo editar via IA (#79) — 2026-06-10.** Antes,
+  anexos enviados pra IA no modo `editar` eram interpretados pra
+  contexto mas **descartados** ao confirmar. Agora `saveEditMode`
+  em `CaptureScreen.tsx` chama `uploadAll(targetDemand.id, user.id)`
+  depois do `updateDemand`, reaproveitando o mesmo pipeline do
+  fluxo de criação (move tmp→final pros anexos grandes, upload
+  direto pros pequenos). `EditConfirmView` ganhou uma seção
+  "Anexos a adicionar (N)" com `AttachmentRow` e botão dinâmico
+  ("Aplicar 2 mudanças + 1 anexo"). Permite confirmar sem nenhum
+  diff marcado se houver anexo (caso "só quero anexar uma imagem
+  na demanda X").
+
+- ✅ **Prompt distingue anexar de comentar — 2026-06-10.** Edge
+  Function `extract-demand` ganhou exemplo `[D]` em "editar"
+  cobrindo "anexa esse print na demanda do banner da Acme" +
+  imagem → `intencao: "editar"`. Regra forte no topo das dicas:
+  captura com anexo + referência a demanda existente → SEMPRE
+  editar, nunca comentar (anexos só ficam vinculados a demandas
+  neste sistema; comentários não suportam arquivos). Sem essa
+  regra a IA classificava "anexa essa imagem na demanda X" como
+  comentar — que descartava silenciosamente o anexo.
+
+### Quick Look preview (#80) — 2026-06-11
+
+- ✅ **Janela Tauri separada para anexos com zoom.** Substituído o
+  overlay full-screen do drawer (`AttachmentViewer`) por uma janela
+  Tauri dedicada (`label: "preview"`), pré-declarada em
+  `tauri.conf.json` (visible: false, viva escondida — mesmo padrão
+  da `capture`). Carrega 1000×720, redimensionável, decorations
+  nativas, fica fora do alwaysOnTop.
+- ✅ **Comunicação main → preview via evento Tauri.** Helper
+  `src/lib/preview.ts` resolve a signed URL do Storage, emite
+  `preview:open` com payload (`url`, `name`, `mime`, `sizeBytes`)
+  pra janela e dá show + focus. `PreviewScreen.tsx` escuta o
+  evento e atualiza o título da janela com o nome do arquivo.
+- ✅ **Zoom rico em imagens.** Scroll wheel com pivô no cursor
+  (mantém o pixel sob o cursor parado), drag pra pan quando
+  ampliado, double-click toggle 1×↔2×, atalhos `+` / `−` / `0`,
+  range 10%–1000%. Vídeo, áudio e PDF continuam com controles
+  nativos do webview (zoom de PDF é nativo do iframe).
+- ✅ **Janela é hideable, não closeable.** `onCloseRequested`
+  intercepta o X nativo e chama `hide()` em vez de fechar — assim
+  a janela sobrevive entre invocações e a próxima abertura é
+  instantânea. Esc também esconde.
+- ✅ **Permissões adicionadas.** `core:event:allow-emit`,
+  `core:event:allow-emit-to`, `core:window:allow-set-title` no
+  `capabilities/default.json`. Janela `preview` incluída em
+  `windows: ["main", "capture", "preview"]`.
+
+#### Ajustes pós-feedback (2026-06-11):
+
+- ✅ **Áudio toca inline, não abre janela.** Áudio não tem
+  benefício de zoom ou janela separada — só atrapalha. Agora
+  `AttachmentItem` no drawer detecta `category === "audio"` e,
+  ao clicar, expande um `<audio controls>` dentro do próprio
+  item (signed URL carregado on-demand). O botão alterna entre
+  "Tocar" e "Recolher". Imagem/vídeo/PDF continuam abrindo na
+  janela preview.
+- ✅ **Botão Fechar visível na PreviewScreen.** Adicionado `✕`
+  no header (sempre presente), e o container raiz ganha
+  `tabIndex={-1}` + foco automático ao receber payload — assim
+  Esc funciona no abrir.
+- ✅ **Esc funciona também dentro do iframe de PDF.** Quando o
+  payload é PDF, registramos `Escape` como **global shortcut**
+  escopo-por-foco: o useEffect ouve `onFocusChanged` da janela
+  e só mantém o atalho registrado enquanto a preview está em
+  primeiro plano. Isso evita sequestrar o Esc de outros apps.
+  Atalho é desregistrado ao trocar de PDF pra outro tipo, ao
+  esconder a janela e no unmount. Permissions adicionadas:
+  `global-shortcut:allow-register/unregister/is-registered`.
+- ✅ **Mídia para ao esconder a janela.** Antes, `hide()` só
+  invisibilizava o webview — `<video>` e `<audio>` continuavam
+  tocando. Agora `hide()` limpa o `payload` (desmonta a mídia)
+  antes do `getCurrentWindow().hide()`. Reseta zoom/pan também.
+- ✅ **Imports estáticos pra Tauri APIs.** `lib/preview.ts` e
+  `PreviewScreen.tsx` usavam `import("@tauri-apps/api/webviewWindow")`
+  e `import("@tauri-apps/plugin-global-shortcut")` dinâmicos.
+  O Vite não pre-bundla deps descobertas só em runtime, então a
+  primeira tentativa devolvia 504 "Outdated Optimize Dep" e o
+  preview falhava com "Importing a module script failed". Trocados
+  por imports estáticos no topo dos arquivos.
+- ✅ **`optimizeDeps.include` no `vite.config.ts`.** Mesmo com
+  imports estáticos, o cache stale do Vite (`node_modules/.vite`)
+  pode segurar o 504 entre runs. Adicionado include explícito de
+  `@tauri-apps/api/event`, `@tauri-apps/api/webviewWindow`,
+  `@tauri-apps/api/window` e `@tauri-apps/plugin-global-shortcut`
+  pra força bruta no pre-bundle do boot. Defesa contra esse vetor
+  voltar a aparecer pra outras APIs Tauri.
+
+### Viewer de documentos office (#81) — 2026-06-11
+
+- ✅ **DOCX/XLSX/TXT/CSV abrem dentro da PreviewScreen.** Antes,
+  esses tipos caíam no fallback "Pré-visualização não suportada —
+  use Baixar". Agora cada um tem um viewer dedicado dentro da
+  janela preview. Tipos não-office (e.g. RTF, ODT) continuam com
+  o fallback.
+- ✅ **`src/lib/officeRender.ts`.** Funções `renderDocxAsHtml`,
+  `renderXlsxAsSheets`, `renderTextFile` que aceitam signed URL,
+  fazem fetch como `Uint8Array` e usam as mesmas libs do pipeline
+  de extração pra IA — `mammoth.convertToHtml` (que devolve HTML
+  com formatação, vs `extractRawText` usado pra IA),
+  `read-excel-file/web-worker` (linhas por aba). Lazy import,
+  zero impacto no bundle inicial. Também tem `parseCsv` próprio
+  pra CSV com aspas duplas.
+- ✅ **Componentes na PreviewScreen.** `DocxView` renderiza o
+  HTML sanitizado (DOMPurify) num container `bg-white max-w-3xl`
+  estilo página de Word. `XlsxView` tem **tabs de abas** quando
+  há mais de uma planilha + `<table>` com header sticky e
+  numeração de linhas. `CsvView` reusa o `SheetTable`.
+  `PlainTextView` é `<pre>` monoespaçado. Loading e error states
+  comuns via hook `useAsyncResource(loader, key)`.
+
+#### Hardening pós-feedback (2026-06-11):
+
+- ✅ **XLSX: normalização do retorno de `read-excel-file`.** A lib
+  às vezes devolve `{ rows, errors }` em vez de `Row[]` puro
+  (depende da versão e do formato do arquivo). `renderXlsxAsSheets`
+  agora normaliza pra `Cell[][]` e garante que cada linha é uma
+  array — sem isso, `header.map(...)` no `SheetTable` lançava
+  TypeError com planilhas em formato inesperado.
+- ✅ **XLSX: API v9 do `read-excel-file` — 2026-06-11.** A
+  primeira tentativa usava `readXlsxFile(blob, { getSheets: true })`
+  + leitura aba a aba por `s.name`, padrão das versões antigas.
+  Mas a v9.0.10 (instalada) reescreveu a API: o default export
+  agora devolve `Sheet[]` direto (`{ sheet: string, data: Row[] }[]`)
+  e a opção `getSheets` não existe mais. Resultado: `s.name` saía
+  `undefined`, a leitura por aba caía num modo que devolvia tudo
+  aninhado, o `normalizeRow` via cada Sheet como objeto e pegava
+  `Object.values`, gerando linhas tipo `[nome_da_aba, dados_em_JSON]`
+  na tabela. Também causava `Encountered two children with the
+  same key, NaN` porque `s.name + i` com `undefined` é `NaN`.
+  Reescrito pra uma única chamada `readXlsxFile(blob)` que já
+  devolve todas as abas no formato certo.
+- ✅ **#81 fechado — 2026-06-11.** XLSX, DOCX, CSV e TXT abrindo
+  certinho na PreviewScreen, com tabs de abas e formatação. Pronto
+  pra distribuição beta.
+- ✅ **`SheetTable` com guards.** Se `header` não for array mesmo
+  após normalização, mostra "Planilha em formato não suportado"
+  em vez de crashar.
+- ✅ **`ViewerErrorBoundary` em volta dos viewers.** Class
+  component minimalista (`getDerivedStateFromError` +
+  `componentDidCatch`) que captura throws de qualquer viewer e
+  exibe o `ErrorPane`. Reset via `key={payload.url}` — toda troca
+  de arquivo monta um boundary novo, sem estado de erro herdado.
+  Antes, um crash em planilha deixava a árvore React em estado
+  ruim e os próximos arquivos abertos também não montavam direito.
+
+### Bug pré-existente corrigido
+
+- ✅ **Tiptap: extensão `link` duplicada — 2026-06-11.** StarterKit
+  v3 já inclui `Link` por padrão e a gente registrava `Link` de
+  novo no `RichTextEditor` pra setar `autolink`, `linkOnPaste` e
+  classes custom. Resultado: warning `[tiptap warn]: Duplicate
+  extension names found: ['link']` em todo render. Desligado o
+  Link do StarterKit (`link: false`) — nossa config custom segue
+  sendo a única em uso.
+- ✅ **Global shortcut Esc abria a captura — 2026-06-11.** O
+  `tauri_plugin_global_shortcut::Builder::with_handler(...)` no
+  Rust era um handler global que disparava `show_capture_window`
+  pra QUALQUER shortcut Pressed, ignorando qual era. Funcionou até
+  agora porque só existia o Cmd+Shift+D. Quando o PreviewScreen
+  passou a registrar `Escape` pra fechar PDFs (Sprint 12 #80), o
+  mesmo handler abria a captura toda vez que o Esc disparava.
+  Corrigido removendo o `with_handler` e usando `on_shortcut` no
+  `set_capture_hotkey` — handler específico por shortcut, sem
+  dispatch global.
+
+### Bugs corrigidos
+
+- ✅ **Drag-drop reabilitado (#83) — 2026-06-10.** Funcionou após
+  a migração do Font Awesome do Kit pro pacote npm (Sprint 11):
+  o Kit injetava `<svg>` no lugar de `<i>` em runtime e
+  cascateava num `NotFoundError` do React 19 que quebrava o
+  listener `tauri://drag-drop`. Sem o Kit, o handler sobrevive
+  e o drop funciona normal.
+
+- ✅ **Font Awesome — Kit→npm — 2026-06-08.** Migrado de
+  `https://kit.fontawesome.com/...js` pra
+  `@fortawesome/fontawesome-free` (CSS + webfont, zero
+  manipulação de DOM). O Kit em modo SVG conflitava com o
+  reconciler do React 19 (cascateava `NotFoundError`). Import
+  em `src/main.tsx`: `import "@fortawesome/fontawesome-free/css/all.min.css"`.
+  Kit script + bloco `window.FontAwesomeConfig` removidos do
+  `index.html`.
+
+### Identidade visual
+
+- ✅ **Ícone do app atualizado pra logo-icone.png — 2026-06-11.**
+  Rodado `npx tauri icon ../logo-icone.png` na raiz do
+  `tng-demand-hub`. Regenerou todos os tamanhos automaticamente:
+  `src-tauri/icons/{32x32,128x128,128x128@2x}.png`, `icon.png`,
+  `icon.icns` (macOS dock), `icon.ico` (Windows), `StoreLogo` +
+  `SquareXXxXXLogo` (Windows Store), além de iOS/Android (não
+  usamos mas a CLI gera de qualquer jeito). O tray icon do
+  menubar reaproveita `app.default_window_icon()` em `lib.rs:365`,
+  então atualizou junto — fica em monocromático no macOS por
+  causa de `icon_as_template(true)` (convenção do menubar; pra
+  manter colorido é só mudar pra `false`).
+  - **Favicon da janela:** adicionado `<link rel="icon"
+    type="image/png" href="/logo-icone.png" />` no `index.html`
+    e `logo-icone.png` copiado pra `public/` (Vite serve `/public/*`
+    como root).
+  - **Atenção ao gerar:** `tauri icon` só regera os PNGs. O cargo
+    NÃO detecta mudança nos PNGs sozinho — é preciso tocar
+    `tauri.conf.json` (ou mexer no `Cargo.toml`) pra forçar
+    `cargo:rerun-if-changed`. Sem isso, o binário em
+    `target/debug/` segue com ícone antigo. Depois do rebuild, o
+    macOS ainda cacha ícone no Dock: `killall Dock` força refresh.
+- ✅ **Tray icon colorido — 2026-06-11.** `icon_as_template(true)`
+  em `src-tauri/src/lib.rs:366` mandava o macOS converter o
+  tray pra silhueta monocromática (só canal alfa). Como o
+  `logo-icone.png` tem fundo preenchido (sem transparência), saía
+  como quadrado branco no menubar. Trocado pra `false` — mostra
+  o foguete colorido. Convenção macOS prefere template, mas
+  exigiria um SVG/PNG silhueta puro.
+- ℹ️ **Ícone no AltTab / Cmd+Tab em dev mode.** No `npm run tauri
+  dev`, o app roda como binário cru (`target/debug/tng-demand-hub`),
+  sem `.app` empacotado. macOS/AltTab caem num ícone genérico de
+  executável (parece terminal). No build de produção
+  (`npm run tauri build`), o `.app` tem `Info.plist + icon.icns` e
+  o ícone correto aparece em todo lugar. Nada a corrigir.
+
+### Limpeza pré-distribuição
+
+- ✅ **Testes removidos do projeto — 2026-06-11.** Apagados todos
+  os `*.test.ts(x)` (15 arquivos em `src/lib/` e `src/components/`),
+  a pasta `src/test/` (setup + factories), `vitest.config.ts` e os
+  scripts `test`/`test:run` do `package.json`. DevDeps `vitest`,
+  `@testing-library/*` (dom/react/jest-dom/user-event) e `jsdom`
+  desinstaladas (`npm install` removeu 50 pacotes do node_modules).
+  Motivo: a suíte era do MVP inicial e não estava sendo mantida
+  com as novas features. Pra reativar no futuro, basta `npm i -D
+  vitest @testing-library/{react,dom,jest-dom,user-event} jsdom` +
+  recriar `vitest.config.ts`.
+
+## Sprint 13 — em stand-by (Beta Interno)
 
 Distribuição para a equipe TNG (~5 pessoas) decidida em 2026-06-06
-para ficar em stand-by até que o cardoso prossiga com outros temas.
+para ficar em stand-by até concluir o Sprint 12.
 
 Quando reativar:
 - Distribuição via update assinado (workflow Release já está pronto)

@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { LoginScreen } from "./screens/LoginScreen";
 import { DashboardScreen } from "./screens/DashboardScreen";
 import { CaptureScreen } from "./screens/CaptureScreen";
+import { PreviewScreen } from "./screens/PreviewScreen";
 import { applyHotkey } from "./lib/hotkey";
 
 function MainApp() {
@@ -58,6 +59,10 @@ function App() {
 
   if (windowLabel === "capture") {
     return <CaptureScreen />;
+  }
+
+  if (windowLabel === "preview") {
+    return <PreviewScreen />;
   }
 
   return (

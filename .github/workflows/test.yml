@@ -1,12 +1,12 @@
 # =============================================================================
-# CI — Testes do TNG Demand Hub
+# CI — Type-check do TNG Demand Hub
 # =============================================================================
-# Roda em todo push em main e em pull requests. Falha rápido (fail-fast) com
-# type-check + suite de testes do Vitest. Não builda o app desktop aqui —
-# isso é só do workflow release.yml.
+# Roda em todo push em main e em PRs. Só type-check do TypeScript —
+# a suite Vitest foi removida no Sprint 12 (pre-beta cleanup). Builds
+# de desktop ficam no workflow release.yml (gatilhado por tags v*).
 # =============================================================================
 
-name: Tests
+name: Type-check
 
 on:
   push:
@@ -15,8 +15,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    name: Type-check + Vitest
+  typecheck:
+    name: Type-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,6 +33,3 @@ jobs:
 
       - name: Type-check
         run: npx tsc --noEmit
-
-      - name: Tests
-        run: npm run test:run

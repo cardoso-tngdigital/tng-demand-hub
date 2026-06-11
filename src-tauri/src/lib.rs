@@ -112,10 +112,18 @@ fn set_capture_hotkey(
     app: tauri::AppHandle,
     accelerator: String,
 ) -> Result<(), String> {
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    gs.register(accelerator.as_str()).map_err(|e| e.to_string())?;
+    // Registra com handler específico pra ESTE shortcut. Outros atalhos
+    // registrados pelo JS (ex: Esc da janela preview) têm seus próprios
+    // callbacks e não disparam esse aqui.
+    gs.on_shortcut(accelerator.as_str(), |app, _shortcut, event| {
+        if event.state() == ShortcutState::Pressed {
+            show_capture_window(app);
+        }
+    })
+    .map_err(|e| e.to_string())?;
     DOUBLE_TAP_MODE.store(0, Ordering::SeqCst);
     LAST_PRESS_MS.store(-1, Ordering::SeqCst);
     Ok(())
@@ -319,16 +327,11 @@ pub fn run() {
 
     #[cfg(desktop)]
     {
-        builder = builder.plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    use tauri_plugin_global_shortcut::ShortcutState;
-                    if event.state() == ShortcutState::Pressed {
-                        show_capture_window(app);
-                    }
-                })
-                .build(),
-        );
+        // Sem `with_handler` global: handlers são registrados por shortcut via
+        // `on_shortcut` dentro de `set_capture_hotkey`. O handler global era
+        // disparado por QUALQUER shortcut, então outros atalhos registrados
+        // (ex: Esc da janela preview) também abriam a captura.
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
     }
 
     builder
@@ -360,7 +363,11 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
-                .icon_as_template(true)
+                // template(false) = mantém as cores do logo no menubar.
+                // Com template(true) o macOS converte o icon pra silhueta
+                // monocromática usando só o canal alfa — e como o nosso
+                // logo tem fundo preenchido, sai como um quadrado branco.
+                .icon_as_template(false)
                 .tooltip("TNG Sites — Demandas")
                 .menu(&menu)
                 .show_menu_on_left_click(false)

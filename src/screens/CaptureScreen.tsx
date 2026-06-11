@@ -408,17 +408,44 @@ export function CaptureScreen() {
     setBusy(true);
     setError(null);
     const patch = diffsToPatch(diffs);
-    if (Object.keys(patch).length === 0) {
+    const hasPatch = Object.keys(patch).length > 0;
+    if (!hasPatch && attachments.length === 0) {
       setBusy(false);
       setError("Nenhuma mudança marcada.");
       return;
     }
-    const { error } = await updateDemand(targetDemand.id, patch);
-    setBusy(false);
-    if (error) {
-      setError(error);
-      return;
+
+    if (hasPatch) {
+      const { error } = await updateDemand(targetDemand.id, patch);
+      if (error) {
+        setBusy(false);
+        setError(error);
+        return;
+      }
     }
+
+    if (attachments.length > 0) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setBusy(false);
+        setError("Sessão expirada. Faça login novamente.");
+        return;
+      }
+      const uploadErrors = await uploadAll(targetDemand.id, user.id);
+      if (uploadErrors.length > 0) {
+        setBusy(false);
+        setError(
+          hasPatch
+            ? `Mudanças aplicadas, mas anexos falharam: ${uploadErrors.join(" · ")}`
+            : `Falha no envio de anexos: ${uploadErrors.join(" · ")}`,
+        );
+        return;
+      }
+    }
+
+    setBusy(false);
     await closeWindow();
   }
 
@@ -556,6 +583,8 @@ export function CaptureScreen() {
           diffs={proposedDiffs}
           clients={clients}
           profiles={profiles}
+          attachments={attachments}
+          onRemoveAttachment={removeAttachment}
           busy={busy}
           error={error}
           onCancel={() => void closeWindow()}
@@ -1446,6 +1475,8 @@ function EditConfirmView(props: {
   diffs: FieldDiff[];
   clients: ClientOption[];
   profiles: ProfileOption[];
+  attachments: PendingAttachment[];
+  onRemoveAttachment: (id: string) => void;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -1492,6 +1523,8 @@ function EditConfirmView(props: {
     htmlToPlainText(legacyToHtml(props.target.description)).slice(0, 80);
 
   const selectedCount = checked.size;
+  const attachmentCount = props.attachments.length;
+  const totalActions = selectedCount + attachmentCount;
 
   return (
     <div className="flex h-screen items-center justify-center bg-tng-marine-700">
@@ -1534,10 +1567,16 @@ function EditConfirmView(props: {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {props.diffs.length === 0 ? (
+          {props.diffs.length === 0 && attachmentCount === 0 ? (
             <p className="text-[12px] text-tng-marine-300">
               A IA não detectou nenhuma mudança em relação à demanda atual.
               Volta e refaz a captura mencionando o que precisa alterar.
+            </p>
+          ) : props.diffs.length === 0 ? (
+            <p className="text-[12px] text-tng-marine-300">
+              Sem alterações de campos. {attachmentCount} anexo
+              {attachmentCount > 1 ? "s serão adicionados" : " será adicionado"} à
+              demanda.
             </p>
           ) : (
             <ul className="space-y-2">
@@ -1592,6 +1631,23 @@ function EditConfirmView(props: {
               })}
             </ul>
           )}
+
+          {attachmentCount > 0 && (
+            <div className="mt-4">
+              <div className="mb-1.5 text-[10px] uppercase tracking-wider text-tng-marine-300">
+                Anexos a adicionar ({attachmentCount})
+              </div>
+              <ul className="space-y-1">
+                {props.attachments.map((a) => (
+                  <AttachmentRow
+                    key={a.id}
+                    pending={a}
+                    onRemove={() => props.onRemoveAttachment(a.id)}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
 
         {props.error && (
@@ -1613,19 +1669,30 @@ function EditConfirmView(props: {
           </span>
           <button
             onClick={handleConfirm}
-            disabled={props.busy || selectedCount === 0}
+            disabled={props.busy || totalActions === 0}
             className="rounded-md bg-tng-orange-400 px-3 py-1.5 text-xs font-semibold text-tng-marine-900 transition hover:bg-tng-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {props.busy
               ? "Aplicando…"
-              : selectedCount === 0
+              : totalActions === 0
               ? "Marque ao menos um campo"
-              : `Aplicar ${selectedCount} mudança${selectedCount > 1 ? "s" : ""}`}
+              : confirmButtonLabel(selectedCount, attachmentCount)}
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+function confirmButtonLabel(diffCount: number, attachmentCount: number): string {
+  const parts: string[] = [];
+  if (diffCount > 0) {
+    parts.push(`${diffCount} mudança${diffCount > 1 ? "s" : ""}`);
+  }
+  if (attachmentCount > 0) {
+    parts.push(`${attachmentCount} anexo${attachmentCount > 1 ? "s" : ""}`);
+  }
+  return `Aplicar ${parts.join(" + ")}`;
 }
 
 // ---------------------------------------------------------------------------

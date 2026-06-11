@@ -9,6 +9,19 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
+  // Garante que as APIs Tauri usadas em janelas secundárias (preview,
+  // capture) entram no pre-bundle do Vite. Sem isso, módulos importados
+  // só por essas rotas demoram pra ser descobertos e a primeira requisição
+  // devolve 504 "Outdated Optimize Dep", quebrando o carregamento.
+  optimizeDeps: {
+    include: [
+      "@tauri-apps/api/event",
+      "@tauri-apps/api/webviewWindow",
+      "@tauri-apps/api/window",
+      "@tauri-apps/plugin-global-shortcut",
+    ],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

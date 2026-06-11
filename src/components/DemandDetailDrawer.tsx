@@ -14,6 +14,7 @@ import {
   pickFilesNative,
   uploadAttachment,
 } from "../lib/attachments";
+import { openAttachmentPreview } from "../lib/preview";
 import { htmlToPlainText, legacyToHtml, sanitizeHtml } from "../lib/htmlContent";
 import {
   describeEvent,
@@ -668,7 +669,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function AttachmentsList({ demandId }: { demandId: string }) {
   const [items, setItems] = useState<Attachment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [viewing, setViewing] = useState<Attachment | null>(null);
   const [uploading, setUploading] = useState(false);
   // Mensagens de erro por arquivo durante upload — mostradas inline e
   // limpas no próximo clique em "Anexar".
@@ -739,7 +739,15 @@ function AttachmentsList({ demandId }: { demandId: string }) {
             <AttachmentItem
               key={a.id}
               attachment={a}
-              onOpen={() => setViewing(a)}
+              onOpenExternal={async () => {
+                const result = await openAttachmentPreview(a);
+                if (!result.ok) {
+                  setUploadErrors((prev) => [
+                    ...prev,
+                    `Abrir ${a.file_name}: ${result.error}`,
+                  ]);
+                }
+              }}
             />
           ))}
         </ul>
@@ -762,25 +770,41 @@ function AttachmentsList({ demandId }: { demandId: string }) {
           ))}
         </ul>
       )}
-
-      <AttachmentViewer attachment={viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }
 
 function AttachmentItem({
   attachment,
-  onOpen,
+  onOpenExternal,
 }: {
   attachment: Attachment;
-  onOpen: () => void;
+  onOpenExternal: () => void;
 }) {
   const category = categorize(attachment.file_type);
+  const [expanded, setExpanded] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+
+  // Áudio toca dentro do próprio item — janela nova só faz sentido pra
+  // arquivos visuais (imagem, vídeo, PDF) onde o zoom/área importa.
+  const isAudio = category === "audio";
+
+  async function toggleAudio() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !audioUrl && !audioError) {
+      const signed = await getSignedUrl(attachment.file_path);
+      if (signed) setAudioUrl(signed);
+      else setAudioError("Não foi possível gerar o link do áudio.");
+    }
+  }
+
   return (
     <li>
       <button
         type="button"
-        onClick={onOpen}
+        onClick={isAudio ? () => void toggleAudio() : onOpenExternal}
         className="flex w-full items-center gap-2 rounded-md bg-tng-marine-700/40 px-2.5 py-2 text-left transition hover:bg-tng-marine-700"
       >
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-tng-marine-800 text-sm text-tng-marine-300">
@@ -792,137 +816,22 @@ function AttachmentItem({
             {formatBytes(attachment.file_size_bytes)} · {attachment.file_type}
           </p>
         </div>
-        <span className="shrink-0 text-[11px] text-tng-marine-300">Abrir</span>
+        <span className="shrink-0 text-[11px] text-tng-marine-300">
+          {isAudio ? (expanded ? "Recolher" : "Tocar") : "Abrir"}
+        </span>
       </button>
+      {isAudio && expanded && (
+        <div className="mt-1 rounded-md bg-tng-marine-800/60 px-2.5 py-2">
+          {audioError ? (
+            <p className="text-[11px] text-red-300">{audioError}</p>
+          ) : audioUrl ? (
+            <audio controls src={audioUrl} className="w-full" />
+          ) : (
+            <p className="text-[11px] text-tng-marine-300">Carregando…</p>
+          )}
+        </div>
+      )}
     </li>
   );
 }
 
-function AttachmentViewer({
-  attachment,
-  onClose,
-}: {
-  attachment: Attachment | null;
-  onClose: () => void;
-}) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!attachment) {
-      setUrl(null);
-      setLoadError(null);
-      return;
-    }
-    let cancelled = false;
-    setUrl(null);
-    setLoadError(null);
-    (async () => {
-      const signed = await getSignedUrl(attachment.file_path);
-      if (cancelled) return;
-      if (!signed) setLoadError("Não foi possível gerar o link do arquivo.");
-      else setUrl(signed);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [attachment]);
-
-  useEffect(() => {
-    if (!attachment) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [attachment, onClose]);
-
-  if (!attachment) return null;
-
-  const category = categorize(attachment.file_type);
-
-  function handleDownload() {
-    if (!url) return;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = attachment!.file_name;
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/85 backdrop-blur-sm">
-      <header className="flex items-center justify-between border-b border-tng-marine-700/60 px-5 py-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-tng-marine-50">
-            {attachment.file_name}
-          </p>
-          <p className="text-[11px] text-tng-marine-300">
-            {formatBytes(attachment.file_size_bytes)} · {attachment.file_type}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleDownload}
-            disabled={!url}
-            className="rounded-md border border-tng-marine-600 px-3 py-1 text-xs text-tng-marine-100 transition hover:border-tng-orange-400 hover:text-tng-orange-400 disabled:opacity-40"
-          >
-            Baixar
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fechar"
-            className="rounded-md p-1.5 text-tng-marine-300 hover:bg-tng-marine-700 hover:text-tng-marine-100"
-          >
-            ✕
-          </button>
-        </div>
-      </header>
-
-      <div className="flex flex-1 items-center justify-center overflow-auto p-5">
-        {loadError ? (
-          <p className="text-sm text-red-300">{loadError}</p>
-        ) : !url ? (
-          <p className="text-sm text-tng-marine-300">Carregando…</p>
-        ) : category === "image" ? (
-          <img
-            src={url}
-            alt={attachment.file_name}
-            className="max-h-full max-w-full rounded shadow-lg"
-          />
-        ) : category === "audio" ? (
-          <div className="w-full max-w-xl rounded-lg bg-tng-marine-800/80 p-6 text-center">
-            <div className="mb-4 text-5xl">🎵</div>
-            <audio controls src={url} className="w-full" />
-          </div>
-        ) : category === "video" ? (
-          <video
-            controls
-            src={url}
-            className="max-h-full max-w-full rounded shadow-lg"
-          />
-        ) : category === "pdf" ? (
-          <iframe
-            src={url}
-            title={attachment.file_name}
-            className="h-full w-full max-w-5xl rounded bg-white shadow-lg"
-          />
-        ) : (
-          <div className="rounded-lg bg-tng-marine-800/80 p-8 text-center">
-            <div className="mb-3 text-5xl text-tng-marine-300">
-              <i className={categoryIconClass(category)} aria-hidden="true" />
-            </div>
-            <p className="mb-1 text-sm text-tng-marine-100">{attachment.file_name}</p>
-            <p className="text-xs text-tng-marine-300">
-              Pré-visualização não suportada para este tipo.
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}

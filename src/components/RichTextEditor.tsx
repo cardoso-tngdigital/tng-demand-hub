@@ -45,6 +45,9 @@ export function RichTextEditor({
         heading: { levels: [2, 3] },
         codeBlock: false,
         horizontalRule: false,
+        // StarterKit v3 já inclui Link; desligamos pra usar nossa config custom
+        // abaixo (autolink + linkOnPaste + classes próprias).
+        link: false,
       }),
       Link.configure({
         openOnClick: false,
