@@ -143,7 +143,7 @@ npm run test:run           # Roda toda a suíte uma vez (usado no CI)
 # Supabase (CLI local)
 supabase migration new <nome>      # Cria nova migração vazia
 supabase db push                    # Aplica migrações no projeto remoto (após link)
-supabase link --project-ref rczvkarulymulmkxolez   # Linka ao projeto remoto
+supabase link --project-ref $SUPABASE_PROJECT_REF   # Linka ao projeto remoto (ref no .env.local)
 ```
 
 ## Testes
@@ -193,15 +193,18 @@ status checks to pass before merging" → marcar `Type-check + Vitest`.
 
 ## Configuração do Supabase remoto
 
-- **Project Ref:** `rczvkarulymulmkxolez`
-- **URL:** `https://rczvkarulymulmkxolez.supabase.co`
-- **Região:** `sa-east-1` (São Paulo)
-- **Painel:** https://supabase.com/dashboard/project/rczvkarulymulmkxolez
+Valores reais (project ref, URL, anon key) estão em `.env.local`
+(gitignored). Região: `sa-east-1` (São Paulo). Para acessar o painel,
+abra o link a partir do project ref do `.env.local`.
 
 ## GitHub
 
-- **Repositório:** https://github.com/cardoso-tngdigital/tng-demand-hub (privado)
-- **Secrets configurados:** `SUPABASE_URL`, `SUPABASE_PROJECT_REF`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`.
+- **Repositório:** público.
+- **Secrets configurados** (em Settings → Secrets and variables → Actions):
+  `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`,
+  `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+- **Secrets de Edge Functions** (em Supabase Dashboard → Edge Functions
+  → Secrets): `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`.
 
 ## Estado atual
 
@@ -468,7 +471,7 @@ em dev quanto em release.
 no signup com `role` default `member` — quem cria a conta primeiro
 *não* vira admin automático. Promover o admin inicial via SQL:
 `update public.profiles set role='admin' where id='<uid>'` com
-service_role key (cardoso.webdesign foi promovido em 2026-06-05).
+service_role key (admin inicial promovido em 2026-06-05).
 
 **Follow-ups da fase de membros:**
 
@@ -780,8 +783,8 @@ pg_cron.
 **Convite e governança**
 
 ~~16. Cadastro do primeiro admin sem flow de UI.~~ Descartado em
-2026-06-06. Cardoso já é admin neste Supabase; promover outros
-membros é SQL pontual que ele faz no painel. Sem fricção real.
+2026-06-06. O admin inicial já existe no Supabase; promover outros
+membros é SQL pontual feito no painel. Sem fricção real.
 17. Convite por e-mail integrado no app (Edge Function chamando
     `auth.admin.inviteUserByEmail`). Hoje admin precisa convidar
     no painel do Supabase. (Sprint 8)
@@ -876,7 +879,7 @@ package.json e título da janela main).
   bordas arredondadas estilo Claude. Em dev, o Tauri não recria
   a janela ao mudar `transparent` no config, então o webview
   fica opaco e vaza branco nos cantos. Em prod (`tauri build`)
-  funcionaria, mas o cardoso preferiu reverter pra simplicidade
+  funcionaria, mas o owner preferiu reverter pra simplicidade
   visual: borda reta, sem `transparent`, sem `rounded-2xl`.
 
 ### Ícones — Font Awesome
@@ -916,9 +919,9 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 ### Refinamentos da IA na captura
 
 - ✅ **Refinar prompt da IA (#82) — 2026-06-08.** Título da demanda
-  agora inclui o cliente quando identificado ("Banner da Bruning
-  Homes" em vez de só "Banner"). Adicionados mais few-shots no
-  prompt cobrindo casos curtos comuns ("feito 3 do Bruning", "Acme
+  agora inclui o cliente quando identificado ("Banner da Cliente A"
+  em vez de só "Banner"). Adicionados mais few-shots no prompt
+  cobrindo casos curtos comuns ("feito 3 do Cliente A", "Cliente B
   aprovou") pra reduzir falsos "criar". Edge Function `extract-demand`.
 
 - ✅ **Anexos no modo editar via IA (#79) — 2026-06-10.** Antes,
@@ -935,7 +938,7 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 - ✅ **Prompt distingue anexar de comentar — 2026-06-10.** Edge
   Function `extract-demand` ganhou exemplo `[D]` em "editar"
-  cobrindo "anexa esse print na demanda do banner da Acme" +
+  cobrindo "anexa esse print na demanda do banner do Cliente A" +
   imagem → `intencao: "editar"`. Regra forte no topo das dicas:
   captura com anexo + referência a demanda existente → SEMPRE
   editar, nunca comentar (anexos só ficam vinculados a demandas
@@ -1200,6 +1203,37 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
   `xattr -cr "/Applications/TNG Sites - Demandas.app"`
   Roda uma vez após cada install manual. Updates via auto-updater
   não precisam (Tauri remove quarantine internamente).
+
+### Auditoria pré-distribuição (2026-06-12)
+
+Antes de tornar o repo público, varredura completa de secrets, info
+sensível e superfície de ataque. Resultado: nenhum secret real
+exposto, histórico do git limpo, edge functions usando `Deno.env.get()`,
+permissões Tauri mínimas. Pequenas limpezas aplicadas:
+
+- ✅ **Project ref do Supabase removido do CLAUDE.md.** Estava em 4
+  lugares: bloco de comandos úteis, seção "Configuração do Supabase
+  remoto", link do painel. Substituído por placeholder `$SUPABASE_PROJECT_REF`
+  + nota de que o valor real está no `.env.local`. (Tecnicamente o ref
+  vai no binário via `VITE_SUPABASE_URL`, mas defense in depth — não
+  precisa estar em texto puro no repo público.)
+- ✅ **Nomes de clientes reais anonimizados** na Edge Function
+  `extract-demand/index.ts` (27 ocorrências) e no CLAUDE.md. "Bruning
+  Homes" → "Cliente Beta", "Acme" → "Cliente Alfa". Não afeta a
+  classificação da IA (são só few-shots), mas evita expor relação
+  comercial real.
+- ✅ **Menções a username pessoal ("cardoso.webdesign") sanitizadas**
+  no CLAUDE.md — substituído por "admin inicial" / "owner".
+- ✅ **CSP ativado no `tauri.conf.json`.** Antes era `csp: null`
+  (permite qualquer fetch/script). Agora whitelist específica:
+  `default-src 'self'`, `connect-src` só pro Supabase + GitHub
+  releases, `script-src` com `'unsafe-inline'` (Vite precisa),
+  `style-src` + `font-src` pro Google Fonts. Protege contra XSS se
+  algum input não sanitizado chegar no DOM.
+- ✅ **README.md reescrito.** Saiu o template padrão do Tauri
+  ("Tauri + React + Typescript"), entrou documentação real:
+  descrição do app, instruções de install pros membros (Win + Mac
+  arm/intel), setup de dev, pipeline de release.
 
 ## Sprint 13 — em stand-by (Beta Interno)
 

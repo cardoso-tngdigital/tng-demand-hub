@@ -61,7 +61,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https: ipc: http://ipc.localhost; media-src 'self' data: blob: https:; connect-src 'self' ipc: http://ipc.localhost https://*.supabase.co wss://*.supabase.co https://github.com https://api.github.com https://objects.githubusercontent.com; worker-src 'self' blob:; frame-src 'self' blob:"
     }
   },
   "bundle": {

@@ -534,8 +534,8 @@ INSTRUÇÕES:
      cliente" quando houver cliente conhecido — o nome do cliente faz parte
      do título porque o time precisa identificar de quem é a demanda numa
      piscadela. Exemplos bons:
-       * "Ajustar banner do header da Acme"
-       * "Criar página de FAQ para Bruning Homes"
+       * "Ajustar banner do header da Cliente Alfa"
+       * "Criar página de FAQ para Cliente Beta"
        * "Corrigir erro 500 no checkout da TNG"
      Exemplos ruins (NÃO faça): "O cliente quer que ajuste o banner...",
      "Pedido importante do João sobre o site".
@@ -558,7 +558,7 @@ INSTRUÇÕES:
          impacto grande no cliente.
          Ex.: "Importante, precisa sair essa semana", "Cliente cobrou".
        * "media"   — fluxo normal (DEFAULT quando não há sinal claro).
-         Ex.: "Ajustar o footer do site da Acme".
+         Ex.: "Ajustar o footer do site da Cliente Alfa".
        * "baixa"   — quando der, sem cobrança. Melhoria interna.
          Ex.: "Quando sobrar tempo, refatorar o componente X".
    - prazo: data ISO 8601 (YYYY-MM-DD). Interprete expressões relativas
@@ -591,16 +591,16 @@ INSTRUÇÕES:
 
    ─ "criar" (3 exemplos) ─
 
-   [A] Texto: "Pedro, precisa criar uma landing pra Acme até sexta. É urgente."
+   [A] Texto: "Pedro, precisa criar uma landing pra Cliente Alfa até sexta. É urgente."
    intencao: "criar"  (não há referência a demanda existente)
-   titulo:    "Criar landing page da Acme"
+   titulo:    "Criar landing page da Cliente Alfa"
    prioridade: "urgente"
    prazo:     próxima sexta a partir de ${args.isoDate}
    tags:      ["landing-page"]
 
-   [B] Texto: "Adicionar páginas de cidades para Bruning Homes, prazo 10 dias."
+   [B] Texto: "Adicionar páginas de cidades para Cliente Beta, prazo 10 dias."
    intencao: "criar"  (nova demanda; verbo de criação implícito)
-   titulo:    "Adicionar páginas de cidades para Bruning Homes"
+   titulo:    "Adicionar páginas de cidades para Cliente Beta"
    prioridade: "media"
    prazo:     ${args.isoDate} + 10 dias
    tags:      ["paginas-cidades", "seo"]
@@ -613,58 +613,58 @@ INSTRUÇÕES:
 
    ─ "editar" (3 exemplos) ─
 
-   [A] Texto: "A demanda das páginas de serviço da Acme agora tem prazo de
+   [A] Texto: "A demanda das páginas de serviço da Cliente Alfa agora tem prazo de
               5 dias e é urgente. Cliente cobrou."
    intencao: "editar"  (refere "A demanda ... agora tem...")
-   titulo:    "Páginas de serviço da Acme"   ← demanda alvo, NÃO a operação
+   titulo:    "Páginas de serviço da Cliente Alfa"   ← demanda alvo, NÃO a operação
    prazo:     ${args.isoDate} + 5 dias
    prioridade: "urgente"
    tags:      []                              ← não propor tags em edit
 
-   [B] Texto: "Muda a prioridade do banner da Bruning pra alta"
+   [B] Texto: "Muda a prioridade do banner da Cliente Beta pra alta"
    intencao: "editar"
-   titulo:    "Banner da Bruning Homes"
+   titulo:    "Banner da Cliente Beta"
    prioridade: "alta"
    prazo:     null
    tags:      []
 
-   [C] Texto: "O Pedro agora cuida da landing da Acme em vez do João"
+   [C] Texto: "O Pedro agora cuida da landing da Cliente Alfa em vez do João"
    intencao: "editar"  (reatribuição de responsável)
-   titulo:    "Landing page da Acme"
+   titulo:    "Landing page da Cliente Alfa"
    responsavel: "Pedro"
    tags:      []
 
-   [D] Texto: "anexa esse print na demanda do banner da Acme"  + 1 imagem
+   [D] Texto: "anexa esse print na demanda do banner da Cliente Alfa"  + 1 imagem
    intencao: "editar"  (anexar arquivo a demanda existente = editar; anexos
                         NUNCA vão pra comentários neste sistema)
-   titulo:    "Banner da Acme"
+   titulo:    "Banner da Cliente Alfa"
    prazo:     null
    tags:      []
 
    ─ "comentar" (4 exemplos — incluindo casos curtos comuns) ─
 
-   [A] Texto: "Sobre a demanda de páginas da Acme, já fiz 2 de 10 páginas hoje."
+   [A] Texto: "Sobre a demanda de páginas da Cliente Alfa, já fiz 2 de 10 páginas hoje."
    intencao: "comentar"  (adiciona informação sem alterar campos)
-   titulo:    "Páginas de serviço da Acme"
+   titulo:    "Páginas de serviço da Cliente Alfa"
    descricao_principal: "Progresso: 2 de 10 páginas concluídas."
    tags:      []
 
-   [B] Texto: "Feito 3 das 10 do Bruning"
+   [B] Texto: "Feito 3 das 10 do Cliente Beta"
    intencao: "comentar"  (curto, mas claramente refere demanda existente
                           e adiciona progresso — sem prazo nem mudança)
-   titulo:    "Demanda do Bruning Homes"
+   titulo:    "Demanda do Cliente Beta"
    descricao_principal: "Progresso: 3 das 10 feitas."
    tags:      []
 
-   [C] Texto: "Cliente da Acme aprovou o banner ontem, pode seguir"
+   [C] Texto: "Cliente da Cliente Alfa aprovou o banner ontem, pode seguir"
    intencao: "comentar"  (atualização de status conversacional, não muda campos)
-   titulo:    "Banner da Acme"
+   titulo:    "Banner da Cliente Alfa"
    descricao_principal: "Cliente aprovou o banner — liberado pra seguir."
    tags:      []
 
-   [D] Texto: "O link do figma da página da Bruning é https://figma.com/abc"
+   [D] Texto: "O link do figma da página da Cliente Beta é https://figma.com/abc"
    intencao: "comentar"  (informação suplementar — link, observação, etc.)
-   titulo:    "Página da Bruning Homes"
+   titulo:    "Página da Cliente Beta"
    descricao_principal: "Link do Figma: https://figma.com/abc"
    tags:      []
 
@@ -692,7 +692,7 @@ INSTRUÇÕES:
          "está em X", "tem o link Y") → comentar.
    - "Muda/altera/atualiza X" + valor novo → editar.
    - Capturas curtas mencionando cliente + estado/progresso ("feito 3 do
-     Bruning", "Acme aprovou") → comentar.
+     Cliente Beta", "Cliente Alfa aprovou") → comentar.
    - Verbos no presente perfeito ("já temos", "já está", "já foi feito")
      são sinal forte de comentar — descrevem estado, não criam tarefa.
    - Em dúvida final: se há valor novo pra UM CAMPO específico → editar.
@@ -724,14 +724,14 @@ INSTRUÇÕES:
    EXEMPLO CORRETO (texto + 1 áudio + 1 imagem):
 
    {
-     "descricao_principal": "Pedro precisa ajustar o banner do cliente Acme até quinta-feira.",
-     "descricao_anexos": "🎵 audio.ogg\\n> Transcrição: \\"Oi pessoal, preciso que o banner do topo mude até quinta-feira.\\"\\n\\n🖼️ screenshot.png — Tela atual do site da Acme mostrando o banner antigo no topo."
+     "descricao_principal": "Pedro precisa ajustar o banner do cliente Cliente Alfa até quinta-feira.",
+     "descricao_anexos": "🎵 audio.ogg\\n> Transcrição: \\"Oi pessoal, preciso que o banner do topo mude até quinta-feira.\\"\\n\\n🖼️ screenshot.png — Tela atual do site da Cliente Alfa mostrando o banner antigo no topo."
    }
 
    EXEMPLO INCORRETO (NUNCA faça isso — funde anexo na descricao_principal):
 
    {
-     "descricao_principal": "Pedro pediu por áudio para ajustar o banner do cliente Acme. No áudio ele fala que precisa até quinta-feira. Na imagem screenshot.png aparece o banner antigo.",
+     "descricao_principal": "Pedro pediu por áudio para ajustar o banner do cliente Cliente Alfa. No áudio ele fala que precisa até quinta-feira. Na imagem screenshot.png aparece o banner antigo.",
      "descricao_anexos": null
    }
 
