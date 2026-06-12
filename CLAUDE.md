@@ -1174,6 +1174,33 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 - ✅ **Bump 0.1.2 → 0.1.3 e novo release.** v0.1.2 fica como
   histórico mas não pode ser usada como base de auto-update.
 
+### Hotfix do build de produção (v0.1.4) — 2026-06-12
+
+- ✅ **`fetch failed` no login após instalar release.** O `release.yml`
+  não passava `VITE_SUPABASE_URL` nem `VITE_SUPABASE_ANON_KEY` como
+  env vars pro step do `tauri-action`. O `vite build` no GitHub
+  Actions rodava sem essas vars, então `import.meta.env.VITE_SUPABASE_URL`
+  ficava `undefined` e o `client.ts` caía no fallback
+  `https://placeholder.supabase.co`. Qualquer fetch → ENOTFOUND. O
+  bug só apareceu agora porque até v0.1.3 ninguém tinha testado o
+  binário distribuído (sempre testava via `tauri dev`, que lê
+  `.env.local`).
+- ✅ **Fix: secrets `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`
+  adicionadas ao GitHub** e passadas pro env do step. Anon key é
+  pública por design do Supabase, ir no binário é o esperado;
+  proteção real é RLS + signup público desabilitado.
+
+### Gatekeeper do macOS — workaround manual
+
+- ℹ️ **".app está danificado"** ao abrir o `.dmg` baixado: macOS marca
+  com `com.apple.quarantine` arquivos vindos da internet, e como o
+  app não é notarizado pela Apple (precisaria do Developer Program
+  pago, $99/ano), Gatekeeper bloqueia direto em vez de oferecer
+  "Open anyway". Solução pros membros Mac:
+  `xattr -cr "/Applications/TNG Sites - Demandas.app"`
+  Roda uma vez após cada install manual. Updates via auto-updater
+  não precisam (Tauri remove quarantine internamente).
+
 ## Sprint 13 — em stand-by (Beta Interno)
 
 Distribuição para a equipe TNG (~5 pessoas) decidida em 2026-06-06
