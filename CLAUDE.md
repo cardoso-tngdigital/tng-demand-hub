@@ -1156,6 +1156,24 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
   vitest @testing-library/{react,dom,jest-dom,user-event} jsdom` +
   recriar `vitest.config.ts`.
 
+### Hotfix do auto-updater (v0.1.3) — 2026-06-11
+
+- ✅ **Em-dash no productName quebrava o `latest.json`.** Na release
+  v0.1.2 o `tauri-action` logou `Signature not found for the updater
+  JSON. Skipping upload...` em ambos os jobs (macOS e Windows), e o
+  `latest.json` não foi anexado. Resultado: o endpoint do updater
+  (`releases/latest/download/latest.json`) ficou retornando 404 —
+  auto-update silenciosamente quebrado. Causa raiz: o caractere `—`
+  (em-dash, U+2014) no `productName: "TNG Sites — Demandas"` parece
+  confundir a lógica de matching de arquivo .sig no tauri-action.
+  Na v0.1.1 (nome era "TNG Demand Hub", sem em-dash) funcionava.
+- ✅ **Fix: em-dash trocado por hífen ASCII em 6 lugares.**
+  `tauri.conf.json` (`productName` + `windows[0].title`),
+  `index.html` (`<title>`), `src-tauri/src/lib.rs` (header comment,
+  menu item "Abrir TNG Sites - Demandas", tray tooltip).
+- ✅ **Bump 0.1.2 → 0.1.3 e novo release.** v0.1.2 fica como
+  histórico mas não pode ser usada como base de auto-update.
+
 ## Sprint 13 — em stand-by (Beta Interno)
 
 Distribuição para a equipe TNG (~5 pessoas) decidida em 2026-06-06

@@ -1,5 +1,5 @@
 // =============================================================================
-// TNG Sites — Demandas — Tauri Core
+// TNG Sites - Demandas — Tauri Core
 // =============================================================================
 // Responsabilidades:
 // - Plugins: opener, notification, updater, process, dialog, global-shortcut.
@@ -345,7 +345,7 @@ pub fn run() {
             // -----------------------------------------------------------------
             // Tray Icon — ícone na bandeja do sistema
             // -----------------------------------------------------------------
-            let abrir_item = MenuItem::with_id(app, "open", "Abrir TNG Sites — Demandas", true, None::<&str>)?;
+            let abrir_item = MenuItem::with_id(app, "open", "Abrir TNG Sites - Demandas", true, None::<&str>)?;
             let capturar_item = MenuItem::with_id(
                 app,
                 "capture",
@@ -368,7 +368,7 @@ pub fn run() {
                 // monocromática usando só o canal alfa — e como o nosso
                 // logo tem fundo preenchido, sai como um quadrado branco.
                 .icon_as_template(false)
-                .tooltip("TNG Sites — Demandas")
+                .tooltip("TNG Sites - Demandas")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
