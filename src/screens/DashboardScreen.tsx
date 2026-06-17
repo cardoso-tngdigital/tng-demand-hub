@@ -1252,13 +1252,13 @@ function DemandCard({
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <CardBadges demand={demand} assigneeName={assigneeName} />
-          <DueBadge dueDate={demand.due_date} />
           <StatusButtons
             current={currentStatus}
             onChange={handleStatus}
             saving={saving}
             stopPropagation
           />
+          <DueBadge dueDate={demand.due_date} />
         </div>
       </div>
     </li>
