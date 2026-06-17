@@ -4,7 +4,7 @@ import { LoginScreen } from "./screens/LoginScreen";
 import { DashboardScreen } from "./screens/DashboardScreen";
 import { CaptureScreen } from "./screens/CaptureScreen";
 import { PreviewScreen } from "./screens/PreviewScreen";
-import { applyHotkey } from "./lib/hotkey";
+import { applyHotkey, migrateHotkeyConfigIfNeeded } from "./lib/hotkey";
 
 function MainApp() {
   const { session, loading } = useAuth();
@@ -33,6 +33,7 @@ function App() {
         // Só a janela main pilota o atalho global — a janela capture é
         // criada/escondida pelo Rust e não tem dependência da preferência.
         if (label === "main") {
+          migrateHotkeyConfigIfNeeded();
           void applyHotkey();
         }
       } catch (err) {

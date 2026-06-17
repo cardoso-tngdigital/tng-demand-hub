@@ -26,10 +26,21 @@ export type DoubleTapModifier = "ctrl" | "alt" | "shift" | "cmd";
 const STORAGE_KEY = "tng:hotkey:capture";
 const STORAGE_MODE = "tng:hotkey:mode";
 const STORAGE_DOUBLE_TAP = "tng:hotkey:double-tap";
+const STORAGE_CONFIG_VERSION = "tng:hotkey:config-version";
+// Versão atual do default. Quando bumpar, todo cliente que ainda estiver em
+// versão anterior recebe o novo default na próxima execução, mesmo que tenha
+// uma escolha antiga salva. Versões:
+//   1 — combo Cmd+Shift+D era o default
+//   2 — dupla pressão Option/Alt vira o default (Sprint 14, junho/2026)
+const CURRENT_CONFIG_VERSION = "2";
 export const DEFAULT_HOTKEY = "CmdOrCtrl+Shift+D";
 // Default da dupla pressão: Option (Alt) no Mac, Alt no Windows — mesma
 // tecla que o Claude Desktop usa.
 export const DEFAULT_DOUBLE_TAP: DoubleTapModifier = "alt";
+// Default do modo: dupla pressão é mais ergonômica e foi adotada como
+// padrão pela Sprint 14. Quem já tinha combo escolhido explicitamente
+// mantém via migrateHotkeyConfigIfNeeded().
+export const DEFAULT_MODE: HotkeyMode = "double-tap";
 
 const MODIFIERS = new Set([
   "CmdOrCtrl",
@@ -239,9 +250,27 @@ export function isDoubleTapModifier(v: unknown): v is DoubleTapModifier {
 export function getHotkeyMode(): HotkeyMode {
   try {
     const v = localStorage.getItem(STORAGE_MODE);
-    return v === "double-tap" ? "double-tap" : "combo";
+    if (v === "double-tap" || v === "combo") return v;
   } catch {
-    return "combo";
+    // localStorage indisponível
+  }
+  return DEFAULT_MODE;
+}
+
+// Migra clientes que ainda estão na config version antiga pro novo default.
+// Idempotente — segunda execução é no-op. Deve rodar antes de applyHotkey()
+// no boot. Pra quem nunca escolheu modo, simplesmente seta o default. Pra
+// quem escolheu explicitamente algo antes da v2, sobrescreve com o novo
+// default (a Sprint 14 mudou a configuração padrão).
+export function migrateHotkeyConfigIfNeeded(): void {
+  try {
+    const v = localStorage.getItem(STORAGE_CONFIG_VERSION);
+    if (v === CURRENT_CONFIG_VERSION) return;
+    localStorage.setItem(STORAGE_MODE, DEFAULT_MODE);
+    localStorage.setItem(STORAGE_DOUBLE_TAP, DEFAULT_DOUBLE_TAP);
+    localStorage.setItem(STORAGE_CONFIG_VERSION, CURRENT_CONFIG_VERSION);
+  } catch (err) {
+    console.error("[hotkey] migrate falhou:", err);
   }
 }
 

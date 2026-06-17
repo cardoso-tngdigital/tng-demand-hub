@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import type { Profile, UserRole } from "../types/database";
+import type { NotificationPrefs, Profile, UserRole } from "../types/database";
 
 export async function listAllProfiles(): Promise<{ data: Profile[]; error: string | null }> {
   const { data, error } = await supabase
@@ -44,4 +44,44 @@ export async function updateProfile(
     return { data: null, error: "Sem permissão para alterar este membro (precisa ser admin)." };
   }
   return { data: data as Profile, error: null };
+}
+
+// Atualiza as preferências de notificação do user atual. RLS profiles_update_own
+// permite cada user mexer no próprio registro.
+export async function updateMyNotifications(
+  prefs: NotificationPrefs,
+): Promise<{ error: string | null }> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Sessão expirada." };
+  const { error } = await supabase
+    .from("profiles")
+    .update({ notifications: prefs })
+    .eq("id", user.id);
+  if (error) {
+    console.error("[profiles] updateMyNotifications failed:", error);
+    return { error: error.message };
+  }
+  return { error: null };
+}
+
+export async function getMyProfile(): Promise<{
+  data: Profile | null;
+  error: string | null;
+}> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { data: null, error: "Sessão expirada." };
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (error) {
+    console.error("[profiles] getMyProfile failed:", error);
+    return { data: null, error: error.message };
+  }
+  return { data: data as Profile | null, error: null };
 }

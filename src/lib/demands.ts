@@ -106,6 +106,52 @@ export async function updateDemand(
 }
 
 /**
+ * Apaga uma demanda: remove arquivos do Storage e deleta a row. ON DELETE
+ * CASCADE no Postgres limpa comments, attachments, demand_history e
+ * demand_due_notifications. RLS demands_delete_own_or_admin garante que
+ * só o autor ou admin consigam executar.
+ *
+ * Cleanup de Storage é feito ANTES do delete porque, depois do CASCADE,
+ * perdemos a lista de paths e os objetos ficam órfãos no bucket.
+ */
+export async function deleteDemand(
+  id: string,
+): Promise<{ error: string | null }> {
+  // 1. Lista anexos pra pegar os file_paths antes de a row sumir.
+  const { data: attachments } = await supabase
+    .from("attachments")
+    .select("file_path")
+    .eq("demand_id", id);
+
+  // 2. Remove do Storage (best-effort — RLS attachments_delete_own_or_admin
+  //    deve permitir; se falhar, o delete da demanda vai derrubar as rows
+  //    mesmo assim, mas os arquivos podem ficar órfãos no bucket).
+  const paths = (attachments ?? [])
+    .map((a) => (a as { file_path: string }).file_path)
+    .filter(Boolean);
+  if (paths.length > 0) {
+    const { error: storageError } = await supabase.storage
+      .from("attachments")
+      .remove(paths);
+    if (storageError) {
+      console.error("[demands] storage cleanup failed:", storageError);
+    }
+  }
+
+  // 3. Suprime a notificação eco do realtime (não nos avisar de algo que
+  //    fizemos nós mesmos).
+  markLocalChange(id);
+
+  // 4. Delete da row. CASCADE cuida do resto.
+  const { error } = await supabase.from("demands").delete().eq("id", id);
+  if (error) {
+    console.error("[demands] delete failed:", error);
+    return { error: error.message };
+  }
+  return { error: null };
+}
+
+/**
  * Lista demandas em ordem decrescente de criação.
  */
 export async function listDemands(

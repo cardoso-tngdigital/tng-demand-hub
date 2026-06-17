@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
+import { supabase } from "../lib/supabase/client";
 import type { Demand, DemandPriority, DemandStatus } from "../types/database";
+
+type CommentMatch = { demand_id: string; excerpt: string };
 
 const STATUS_LABEL: Record<DemandStatus, string> = {
   todo: "A fazer",
@@ -17,8 +20,9 @@ const PRIORITY_DOT: Record<DemandPriority, string> = {
 };
 
 const MAX_RESULTS = 10;
+const COMMENT_DEBOUNCE_MS = 250;
 
-type Scored = { demand: Demand; score: number };
+type Scored = { demand: Demand; score: number; commentExcerpt: string | null };
 
 /**
  * Pontua a demanda contra a query. Maior é melhor; zero significa "fora".
@@ -54,6 +58,8 @@ export function SearchPalette({
 }) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  // Matches vindos de busca server-side em comments (debounced).
+  const [commentMatches, setCommentMatches] = useState<CommentMatch[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Reseta input e foco quando abre
@@ -61,18 +67,56 @@ export function SearchPalette({
     if (!open) return;
     setQuery("");
     setActiveIndex(0);
+    setCommentMatches([]);
     const t = window.setTimeout(() => inputRef.current?.focus(), 30);
     return () => window.clearTimeout(t);
   }, [open]);
 
+  // Busca em comentários: debounced, só dispara após 2 chars pra não floodar
+  // o backend. Resultados ficam armazenados em commentMatches e são
+  // mesclados com a busca local em `results`.
+  useEffect(() => {
+    if (!open) return;
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setCommentMatches([]);
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      const { data, error } = await supabase.rpc("search_comment_demand_ids", {
+        q: trimmed,
+      });
+      if (cancelled) return;
+      if (error) {
+        console.error("[SearchPalette] busca em comentários falhou:", error);
+        setCommentMatches([]);
+        return;
+      }
+      setCommentMatches((data ?? []) as CommentMatch[]);
+    }, COMMENT_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [open, query]);
+
   const results = useMemo<Scored[]>(() => {
     const trimmed = query.trim();
+    const commentByDemandId = new Map(commentMatches.map((m) => [m.demand_id, m.excerpt]));
     return demands
-      .map((d) => ({ demand: d, score: scoreDemand(d, trimmed) }))
+      .map((d) => {
+        const score = scoreDemand(d, trimmed);
+        const commentExcerpt = commentByDemandId.get(d.id) ?? null;
+        // Match em comentário soma 1 — abaixo de tag (2) pra que matches mais
+        // diretos no campo da demanda apareçam primeiro.
+        const total = score + (commentExcerpt ? 1 : 0);
+        return { demand: d, score: total, commentExcerpt };
+      })
       .filter((r) => r.score > 0)
       .sort((a, b) => b.score - a.score || (a.demand.title || "").localeCompare(b.demand.title || ""))
       .slice(0, MAX_RESULTS);
-  }, [demands, query]);
+  }, [demands, query, commentMatches]);
 
   // Mantém o índice ativo dentro do range conforme os resultados mudam
   useEffect(() => {
@@ -125,7 +169,7 @@ export function SearchPalette({
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar demanda por título, descrição ou tag…"
+            placeholder="Buscar em título, descrição, tags ou comentários…"
             className="flex-1 bg-transparent text-sm text-tng-marine-50 placeholder:text-tng-marine-400 focus:outline-none"
           />
           <kbd className="rounded bg-tng-marine-700 px-1.5 py-0.5 text-[10px] text-tng-marine-300">
@@ -144,6 +188,7 @@ export function SearchPalette({
                 <ResultRow
                   key={r.demand.id}
                   demand={r.demand}
+                  commentExcerpt={r.commentExcerpt}
                   active={i === activeIndex}
                   onMouseEnter={() => setActiveIndex(i)}
                   onClick={() => {
@@ -173,11 +218,13 @@ export function SearchPalette({
 
 function ResultRow({
   demand,
+  commentExcerpt,
   active,
   onMouseEnter,
   onClick,
 }: {
   demand: Demand;
+  commentExcerpt: string | null;
   active: boolean;
   onMouseEnter: () => void;
   onClick: () => void;
@@ -195,11 +242,16 @@ function ResultRow({
         <p className="truncate text-xs font-medium text-tng-marine-50">
           {demand.title || htmlToPlainText(legacyToHtml(demand.description)).slice(0, 80)}
         </p>
-        {demand.title && demand.description && (
+        {commentExcerpt ? (
+          <p className="truncate text-[10px] text-tng-marine-400">
+            <i className="fa-regular fa-comment mr-1" aria-hidden="true" />
+            …{commentExcerpt}…
+          </p>
+        ) : demand.title && demand.description ? (
           <p className="truncate text-[10px] text-tng-marine-400">
             {htmlToPlainText(legacyToHtml(demand.description))}
           </p>
-        )}
+        ) : null}
       </div>
       <span className="shrink-0 rounded-full bg-tng-marine-700/80 px-2 py-0.5 text-[9px] uppercase tracking-wider text-tng-marine-200">
         {STATUS_LABEL[demand.status]}

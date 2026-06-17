@@ -3,8 +3,10 @@ import { useAuth } from "../hooks/useAuth";
 import { listDemands, subscribeToDemands, updateDemand } from "../lib/demands";
 import { subscribeToAllCommentInserts } from "../lib/comments";
 import {
+  bucketToLabel,
   ensureNotificationPermission,
   notifyAboutDemand,
+  subscribeToDueNotifications,
   subscribeToNotificationClick,
   wasLocalChange,
 } from "../lib/notifications";
@@ -23,16 +25,21 @@ import { MembersAdmin } from "../components/MembersAdmin";
 import { AiUsageAdmin } from "../components/AiUsageAdmin";
 import { RulesAdmin } from "../components/RulesAdmin";
 import { HotkeySettings } from "../components/HotkeySettings";
+import { NotificationSettings } from "../components/NotificationSettings";
+import { PerformancePanel } from "../components/PerformancePanel";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { OnboardingTour } from "../components/OnboardingTour";
 import { listAllProfiles } from "../lib/profiles";
 import { getCurrentHotkeyDisplay } from "../lib/hotkey";
+import { formatDueDate, DUE_TONE_CLASSES } from "../lib/dates";
 import type {
   Demand,
   DemandInfrastructure,
   DemandPriority,
   DemandStatus,
+  NotificationPrefs,
 } from "../types/database";
+import { DEFAULT_NOTIFICATION_PREFS } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
 
 // "overdue" não é um status real do banco — é um filtro composto (prazo
@@ -93,6 +100,8 @@ export function DashboardScreen() {
   const [aiUsageOpen, setAiUsageOpen] = useState(false);
   const [rulesAdminOpen, setRulesAdminOpen] = useState(false);
   const [hotkeySettingsOpen, setHotkeySettingsOpen] = useState(false);
+  const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
+  const [performancePanelOpen, setPerformancePanelOpen] = useState(false);
   const [currentHotkey, setCurrentHotkey] = useState<string>(() =>
     getCurrentHotkeyDisplay(),
   );
@@ -100,6 +109,10 @@ export function DashboardScreen() {
   // Nome de exibição do user atual — preferimos full_name a email no header
   // e em qualquer outro lugar do app. Email só aparece como tooltip.
   const [currentUserName, setCurrentUserName] = useState<string | null>(null);
+
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefs>(
+    DEFAULT_NOTIFICATION_PREFS,
+  );
 
   // Detecta papel admin do usuário atual para liberar gestão de regras e
   // carrega o nome de exibição.
@@ -110,8 +123,11 @@ export function DashboardScreen() {
       const me = all.data.find((p) => p.id === currentUserId);
       setIsAdmin(me?.role === "admin");
       setCurrentUserName(me?.full_name ?? null);
+      if (me?.notifications) {
+        setNotificationPrefs({ ...DEFAULT_NOTIFICATION_PREFS, ...me.notifications });
+      }
     })();
-  }, [currentUserId, membersAdminOpen]);
+  }, [currentUserId, membersAdminOpen, notificationSettingsOpen]);
 
   // Recarrega a lista de clientes quando o admin é fechado (pra refletir
   // mudanças nos filtros e selects do drawer/captura).
@@ -216,6 +232,10 @@ export function DashboardScreen() {
   useEffect(() => {
     isAdminRef.current = isAdmin;
   }, [isAdmin]);
+  const notificationPrefsRef = useRef<NotificationPrefs>(notificationPrefs);
+  useEffect(() => {
+    notificationPrefsRef.current = notificationPrefs;
+  }, [notificationPrefs]);
   const clientsRef = useRef<ClientOption[]>(clients);
   useEffect(() => {
     clientsRef.current = clients;
@@ -251,6 +271,7 @@ export function DashboardScreen() {
         me: currentUserIdRef.current,
         role: isAdminRef.current ? "admin" : "member",
         wasLocalChange,
+        prefs: notificationPrefsRef.current,
         ctx: {
           clientName: (id) =>
             id
@@ -283,6 +304,7 @@ export function DashboardScreen() {
           demandsRef.current.find((d) => d.id === comment.demand_id) ?? null,
         me: currentUserIdRef.current,
         role: isAdminRef.current ? "admin" : "member",
+        prefs: notificationPrefsRef.current,
       });
       if (notif) {
         void notifyAboutDemand(notif.title, notif.body, notif.demandId);
@@ -290,6 +312,22 @@ export function DashboardScreen() {
     });
     return unsubscribe;
   }, []);
+
+  // Notificações de prazo — Postgres cria os registros 1x/dia via pg_cron,
+  // o cliente só escuta e dispara notificação local. Servidor já filtra por
+  // profiles.notifications.due_soon, então qualquer INSERT que chegar aqui
+  // é desejado.
+  useEffect(() => {
+    if (!currentUserId) return;
+    const unsubscribe = subscribeToDueNotifications(currentUserId, (row) => {
+      const demand = demandsRef.current.find((d) => d.id === row.demand_id);
+      if (!demand) return;
+      const title = demand.title || "Demanda sem título";
+      const body = `Prazo ${bucketToLabel(row.bucket)}.`;
+      void notifyAboutDemand(title, body, row.demand_id);
+    });
+    return unsubscribe;
+  }, [currentUserId]);
 
   const selectedDemand = useMemo(
     () => demands.find((d) => d.id === selectedDemandId) ?? null,
@@ -317,6 +355,11 @@ export function DashboardScreen() {
   // archived ficam visíveis sempre — o Kanban é a visão de fluxo completo.
   const [showClosed, setShowClosed] = useState(false);
 
+  // Filtro de prazo: data específica em formato "YYYY-MM-DD". null = sem filtro.
+  const [dateFilter, setDateFilter] = useState<string | null>(null);
+  // Ordenação por prazo. "none" mantém ordem natural (mais recentes primeiro).
+  const [sortOrder, setSortOrder] = useState<"none" | "due_asc" | "due_desc">("none");
+
   // Filtro base — comum à lista e ao Kanban. Inclui status filter explícito
   // (todo/doing/overdue) mas não a regra de "esconder concluídas em all":
   // essa é exclusiva da lista.
@@ -332,9 +375,12 @@ export function DashboardScreen() {
       if (clientFilter !== "all" && clientFilter !== "none" && d.client_id !== clientFilter) return false;
       if (assigneeFilter === "none" && d.assignee_id !== null) return false;
       if (assigneeFilter !== "all" && assigneeFilter !== "none" && d.assignee_id !== assigneeFilter) return false;
+      // Filtro de data: due_date salvo é "YYYY-MM-DD" (postgres `date`), igual ao
+      // valor do <input type="date">, então comparação direta basta.
+      if (dateFilter && d.due_date !== dateFilter) return false;
       return true;
     });
-  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter, isOverdue]);
+  }, [demands, statusFilter, priorityFilter, clientFilter, assigneeFilter, dateFilter, isOverdue]);
 
   // Versão da lista — segue 3 modos:
   //   - statusFilter !== "all"  → só o que o filtro pediu (incluindo overdue)
@@ -343,12 +389,25 @@ export function DashboardScreen() {
   //     (o toggle vira filtro exclusivo: o user quer revisar quais foram
   //     fechadas, não ver tudo misturado).
   const demandsForList = useMemo(() => {
-    if (statusFilter !== "all") return baseFiltered;
-    if (showClosed) {
-      return baseFiltered.filter((d) => d.status === "done" || d.status === "archived");
-    }
-    return baseFiltered.filter((d) => d.status !== "done" && d.status !== "archived");
-  }, [baseFiltered, statusFilter, showClosed]);
+    let result: Demand[];
+    if (statusFilter !== "all") result = baseFiltered;
+    else if (showClosed)
+      result = baseFiltered.filter((d) => d.status === "done" || d.status === "archived");
+    else
+      result = baseFiltered.filter((d) => d.status !== "done" && d.status !== "archived");
+
+    if (sortOrder === "none") return result;
+    // Demandas sem prazo vão pro fim independente da direção, pra que o user
+    // sempre veja primeiro o que tem prazo definido (informação útil > ruído).
+    const dir = sortOrder === "due_asc" ? 1 : -1;
+    return [...result].sort((a, b) => {
+      if (!a.due_date && !b.due_date) return 0;
+      if (!a.due_date) return 1;
+      if (!b.due_date) return -1;
+      if (a.due_date === b.due_date) return 0;
+      return a.due_date < b.due_date ? -dir : dir;
+    });
+  }, [baseFiltered, statusFilter, showClosed, sortOrder]);
 
   // Versão do Kanban: usa só os filtros explícitos, sem esconder concluídas.
   const kanbanDemands = baseFiltered;
@@ -357,13 +416,15 @@ export function DashboardScreen() {
     statusFilter !== "all" ||
     priorityFilter !== "all" ||
     clientFilter !== "all" ||
-    assigneeFilter !== "all";
+    assigneeFilter !== "all" ||
+    dateFilter !== null;
 
   function clearFilters() {
     setStatusFilter("all");
     setPriorityFilter("all");
     setClientFilter("all");
     setAssigneeFilter("all");
+    setDateFilter(null);
   }
 
   // Stats são calculadas sobre o conjunto TOTAL (não filtrado) — assim cada
@@ -439,6 +500,25 @@ export function DashboardScreen() {
           >
             Regras
           </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setPerformancePanelOpen(true)}
+              className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
+              title="Desempenho da equipe"
+            >
+              <i className="fa-solid fa-chart-line mr-1.5" aria-hidden="true" />
+              Desempenho
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setNotificationSettingsOpen(true)}
+            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
+            title="Preferências de notificação"
+          >
+            <i className="fa-solid fa-bell" aria-hidden="true" />
+          </button>
           <button
             type="button"
             onClick={() => setHotkeySettingsOpen(true)}
@@ -504,10 +584,14 @@ export function DashboardScreen() {
         profiles={profiles}
         showClosed={showClosed}
         statusFilter={statusFilter}
+        dateFilter={dateFilter}
+        sortOrder={sortOrder}
         onPriorityChange={setPriorityFilter}
         onClientChange={setClientFilter}
         onAssigneeChange={setAssigneeFilter}
         onShowClosedChange={setShowClosed}
+        onDateFilterChange={setDateFilter}
+        onSortOrderChange={setSortOrder}
         active={filtersActive}
         onClear={clearFilters}
       />
@@ -561,6 +645,7 @@ export function DashboardScreen() {
         clients={clients}
         profiles={profiles}
         isAdmin={isAdmin}
+        currentUserId={currentUserId}
         onClose={() => setSelectedDemandId(null)}
       />
 
@@ -602,6 +687,16 @@ export function DashboardScreen() {
           setHotkeySettingsOpen(false);
           setCurrentHotkey(getCurrentHotkeyDisplay());
         }}
+      />
+
+      <NotificationSettings
+        open={notificationSettingsOpen}
+        onClose={() => setNotificationSettingsOpen(false)}
+      />
+
+      <PerformancePanel
+        open={performancePanelOpen}
+        onClose={() => setPerformancePanelOpen(false)}
       />
 
       <OnboardingTour />
@@ -661,10 +756,14 @@ function FilterBar(props: {
   // específico (ele já decidiu o que ver).
   statusFilter: StatusFilter;
   showClosed: boolean;
+  dateFilter: string | null;
+  sortOrder: "none" | "due_asc" | "due_desc";
   onPriorityChange: (v: PriorityFilter) => void;
   onClientChange: (v: RefFilter) => void;
   onAssigneeChange: (v: RefFilter) => void;
   onShowClosedChange: (v: boolean) => void;
+  onDateFilterChange: (v: string | null) => void;
+  onSortOrderChange: (v: "none" | "due_asc" | "due_desc") => void;
   active: boolean;
   onClear: () => void;
 }) {
@@ -738,23 +837,86 @@ function FilterBar(props: {
           </Chip>
         ))}
 
-        {/* Toggle só faz sentido quando estamos na vista "todas em aberto"
-            (statusFilter=all). Se já filtra por todo/doing/overdue, esse
-            switch não tem efeito. */}
-        {props.statusFilter === "all" && (
-          <button
-            type="button"
-            onClick={() => props.onShowClosedChange(!props.showClosed)}
-            aria-pressed={props.showClosed}
-            className={`ml-auto rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-              props.showClosed
-                ? "border-tng-orange-400 bg-tng-orange-400/15 text-tng-orange-200"
-                : "border-tng-marine-600 text-tng-marine-300 hover:border-tng-marine-400 hover:text-tng-marine-100"
-            }`}
-          >
-            {props.showClosed ? "Voltar às abertas" : "Ver concluídas"}
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* Ordenação por prazo: 3 estados (none/asc/desc), togglados pelos
+              dois botões. Clicar no já-ativo volta pra "none". */}
+          <div className="flex items-center overflow-hidden rounded-full border border-tng-marine-600">
+            <button
+              type="button"
+              onClick={() =>
+                props.onSortOrderChange(props.sortOrder === "due_asc" ? "none" : "due_asc")
+              }
+              aria-pressed={props.sortOrder === "due_asc"}
+              title="Ordenar por prazo (mais próximo primeiro)"
+              className={`px-2 py-0.5 text-[11px] transition ${
+                props.sortOrder === "due_asc"
+                  ? "bg-tng-orange-400/15 text-tng-orange-200"
+                  : "text-tng-marine-300 hover:bg-tng-marine-700/40 hover:text-tng-marine-100"
+              }`}
+            >
+              <i className="fa-solid fa-arrow-up text-[10px]" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                props.onSortOrderChange(props.sortOrder === "due_desc" ? "none" : "due_desc")
+              }
+              aria-pressed={props.sortOrder === "due_desc"}
+              title="Ordenar por prazo (mais distante primeiro)"
+              className={`border-l border-tng-marine-600 px-2 py-0.5 text-[11px] transition ${
+                props.sortOrder === "due_desc"
+                  ? "bg-tng-orange-400/15 text-tng-orange-200"
+                  : "text-tng-marine-300 hover:bg-tng-marine-700/40 hover:text-tng-marine-100"
+              }`}
+            >
+              <i className="fa-solid fa-arrow-down text-[10px]" aria-hidden="true" />
+            </button>
+          </div>
+
+          {/* Filtro de data: input nativo type=date. Limpa com botão dedicado
+              quando ativo. */}
+          <div className="flex items-center gap-1">
+            <input
+              type="date"
+              value={props.dateFilter ?? ""}
+              onChange={(e) => props.onDateFilterChange(e.target.value || null)}
+              className={`rounded-full border bg-tng-marine-800 px-2.5 py-0.5 text-[11px] text-tng-marine-100 transition focus:border-tng-orange-400 focus:outline-none ${
+                props.dateFilter
+                  ? "border-tng-orange-400/60"
+                  : "border-tng-marine-600"
+              }`}
+              title="Filtrar por data de prazo"
+            />
+            {props.dateFilter && (
+              <button
+                type="button"
+                onClick={() => props.onDateFilterChange(null)}
+                className="text-[11px] text-tng-marine-400 hover:text-tng-orange-400"
+                title="Limpar filtro de data"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            )}
+          </div>
+
+          {/* Toggle só faz sentido quando estamos na vista "todas em aberto"
+              (statusFilter=all). Se já filtra por todo/doing/overdue, esse
+              switch não tem efeito. */}
+          {props.statusFilter === "all" && (
+            <button
+              type="button"
+              onClick={() => props.onShowClosedChange(!props.showClosed)}
+              aria-pressed={props.showClosed}
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+                props.showClosed
+                  ? "border-tng-orange-400 bg-tng-orange-400/15 text-tng-orange-200"
+                  : "border-tng-marine-600 text-tng-marine-300 hover:border-tng-marine-400 hover:text-tng-marine-100"
+              }`}
+            >
+              {props.showClosed ? "Voltar às abertas" : "Ver concluídas"}
+            </button>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -840,6 +1002,19 @@ const INFRASTRUCTURE_BADGE: Record<DemandInfrastructure, { label: string; cls: s
 // natural do JSX (primeiro = mais à direita) deixe o responsável fixo no
 // canto direito enquanto badges opcionais aparecem ao seu lado esquerdo.
 // O badge de status saiu — agora o status é mudado via StatusButtons.
+export function DueBadge({ dueDate }: { dueDate: string | null | undefined }) {
+  const info = formatDueDate(dueDate);
+  if (!info) return null;
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${DUE_TONE_CLASSES[info.tone]}`}
+      title={info.fullLabel}
+    >
+      Prazo: {info.dateLabel} ({info.relativeLabel})
+    </span>
+  );
+}
+
 export function CardBadges({
   demand,
   assigneeName,
@@ -1077,6 +1252,7 @@ function DemandCard({
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <CardBadges demand={demand} assigneeName={assigneeName} />
+          <DueBadge dueDate={demand.due_date} />
           <StatusButtons
             current={currentStatus}
             onChange={handleStatus}

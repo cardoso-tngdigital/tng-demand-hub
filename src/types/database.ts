@@ -12,6 +12,20 @@ export type CapturedVia = "hotkey" | "tray" | "manual";
 export type UserRole = "admin" | "member";
 export type ClientStatus = "active" | "inactive";
 
+export interface NotificationPrefs {
+  assigned: boolean;
+  due_soon: boolean;
+  comments: boolean;
+  completed: boolean;
+}
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  assigned: true,
+  due_soon: true,
+  comments: true,
+  completed: true,
+};
+
 export interface Profile {
   id: string;
   full_name: string;
@@ -20,6 +34,7 @@ export interface Profile {
   hotkey: string;
   theme: "light" | "dark" | "system";
   active: boolean;
+  notifications: NotificationPrefs;
   created_at: string;
   updated_at: string;
 }

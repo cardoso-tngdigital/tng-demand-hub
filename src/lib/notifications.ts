@@ -28,6 +28,16 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { supabase } from "./supabase/client";
+
+export type DueBucket = "5d" | "3d" | "24h";
+
+export type DueNotificationRow = {
+  demand_id: string;
+  user_id: string;
+  bucket: DueBucket;
+  sent_at: string;
+};
 
 let cachedPermission: "granted" | "denied" | "unknown" = "unknown";
 
@@ -167,4 +177,43 @@ export function subscribeToNotificationClick(
     window.removeEventListener("focus", flushIfPending);
     if (unlistenTauri) unlistenTauri();
   };
+}
+
+// ---------------------------------------------------------------------------
+// Notificações de prazo
+// ---------------------------------------------------------------------------
+// O Postgres cria os registros em `demand_due_notifications` 1x/dia via
+// pg_cron + função compute_due_notifications(). Aqui o cliente escuta os
+// INSERTs filtrados pelo próprio user_id e dispara notificação nativa.
+
+export function subscribeToDueNotifications(
+  userId: string,
+  onInsert: (row: DueNotificationRow) => void,
+): () => void {
+  const channel = supabase
+    .channel(`public:demand_due_notifications:${userId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "demand_due_notifications",
+        filter: `user_id=eq.${userId}`,
+      },
+      (payload) => {
+        const row = payload.new as DueNotificationRow | undefined;
+        if (row) onInsert(row);
+      },
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
+export function bucketToLabel(bucket: DueBucket): string {
+  if (bucket === "24h") return "vence em 24h";
+  if (bucket === "3d") return "vence em 3 dias";
+  return "vence em 5 dias";
 }

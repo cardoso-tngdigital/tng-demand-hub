@@ -1246,6 +1246,68 @@ Quando reativar:
 - Correção de bugs do uso real
 - Documentação de uso interna
 
+## Sprint 14 — Pós-Beta Interno (v0.1.5) — 2026-06-16
+
+12 features baseadas em feedback dos membros que testaram v0.1.4. Tudo
+num único bump pra propagar via auto-update de uma vez só (sem release
+até finalizar todas).
+
+- ✅ **Ícone do Dock macOS com mais padding — 2026-06-16.**
+  `public/logo-icone.png` substituído por `logotipo.png` (20% margem em
+  volta), `npx tauri icon` regerou todos os tamanhos.
+- ✅ **Atalho Option+Option / Alt+Alt como padrão — 2026-06-16.**
+  `DEFAULT_MODE` em `src/lib/hotkey.ts` virou `double-tap`. Migration
+  leve via `migrateHotkeyConfigIfNeeded()` (versão 2) força reset pra
+  clientes que ainda estavam no combo. Infra Rust já estava 100% pronta.
+- ✅ **Badge de Prazo no card — 2026-06-16.** Novo helper
+  `formatDueDate()` em `src/lib/dates.ts` com 4 tons (overdue/urgent/
+  soon/normal). Renderizado em `DueBadge` no card da lista.
+- ✅ **Esc na captura não traz o painel principal — 2026-06-16.** Novo
+  command Rust `hide_main_window`. `closeWindow({cancelled:true})` em
+  CaptureScreen esconde a main antes da capture quando user aperta Esc.
+  Envio bem-sucedido mantém comportamento atual (main visível).
+- ✅ **Filtro de data + ordenação por prazo — 2026-06-16.** Estados
+  `dateFilter` e `sortOrder` no DashboardScreen, renderizados na
+  FilterBar com `<input type="date">` e 2 botões (↑↓). Demandas sem
+  due_date vão pro fim da ordenação independente da direção.
+- ✅ **Cmd+K busca em comentários — 2026-06-16.** RPC
+  `search_comment_demand_ids(q)` em migration nova. SearchPalette mantém
+  busca local (título/descrição/tags) e adiciona busca server-side
+  debounced 250ms em comments, mostrando excerpt no resultado.
+- ✅ **Notificações de prazo 5d/3d/24h — 2026-06-16.** Tabela
+  `demand_due_notifications` (PK composta deduplica), função SQL
+  `compute_due_notifications()`, agendamento via pg_cron diário às 09h
+  UTC. Cliente escuta realtime e dispara notif local. Respeita
+  `profiles.notifications.due_soon`. **Nota:** pg_cron precisa estar
+  habilitado no Supabase (Dashboard → Extensions); se não estiver, a
+  função pode ser chamada manualmente.
+- ✅ **Painel de preferências de notificação — 2026-06-16.** Componente
+  `NotificationSettings.tsx` com 4 toggles (assigned / due_soon /
+  comments / completed). Persiste em `profiles.notifications` JSONB já
+  existente. `notificationDecider` agora consulta as prefs antes de
+  emitir notificações de atribuição, comentário e conclusão.
+- ✅ **Excluir demanda + anexos — 2026-06-16.** `deleteDemand()` em
+  `src/lib/demands.ts` lista anexos → remove do Storage → delete na row
+  (CASCADE limpa comments, attachments, demand_history,
+  demand_due_notifications). Botão "Excluir demanda" no drawer (admin
+  OU autor), com modal de confirmação. Policy
+  `demands_delete_own_or_admin` já existia desde Sprint inicial.
+- ✅ **Painel de desempenho (admin) — 2026-06-16.** RPC
+  `member_performance_metrics(start_date, end_date)` agrega por membro:
+  concluídas no período, em aberto, atrasadas, tempo médio total,
+  tempo de resposta (todo→doing) e tempo de execução (doing→done) via
+  `demand_history`. Componente `PerformancePanel.tsx` com filtro de
+  período (7d/30d/90d/custom). Botão visível só pra admin no header.
+- ✅ **Navegação entre anexos com setas — 2026-06-16.** `PreviewPayload`
+  agora carrega `items[]` + `currentIndex`. PreviewScreen escuta
+  ←/→ via window keydown e, pra PDF (que sequestra foco do iframe),
+  registra atalhos globais escopados ao foco da janela. UI mostra
+  contador "N / M" e setinhas no header quando há múltiplos anexos.
+- ✅ **Bump v0.1.5 — 2026-06-16.** Versão em `package.json`,
+  `src-tauri/tauri.conf.json` e `src-tauri/Cargo.toml`. Type-check
+  passa. Release deve ser criada SÓ após validação manual das 12
+  features pelo time.
+
 ## Regras para você (Claude Code)
 
 1. Antes de implementar algo grande, **consulte o PRD** (`../prd_projeto-TNG-Digital.md`) — ele tem schema, fluxos detalhados e prompts da IA.

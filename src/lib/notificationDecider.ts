@@ -20,7 +20,7 @@
 
 import { htmlToPlainText, legacyToHtml } from "./htmlContent";
 import { fieldLabel, formatFieldValue } from "./demandHistory";
-import type { Comment, Demand } from "../types/database";
+import type { Comment, Demand, NotificationPrefs } from "../types/database";
 
 export type Role = "admin" | "member";
 
@@ -111,8 +111,12 @@ export function decideDemandNotification(args: {
   role: Role;
   wasLocalChange: (demandId: string) => boolean;
   ctx?: LookupCtx;
+  // Preferências do user atual. Quando ausente, comporta como "todos true"
+  // (compatível com chamadas legadas). Notif de due_soon é filtrada no
+  // servidor — esta função não checa esse bucket.
+  prefs?: NotificationPrefs;
 }): Notification | null {
-  const { event, change, me, role, wasLocalChange, ctx } = args;
+  const { event, change, me, role, wasLocalChange, ctx, prefs } = args;
   if (!me) return null;
 
   // ---------------------- INSERT --------------------------------------------
@@ -129,6 +133,7 @@ export function decideDemandNotification(args: {
     }
     // Membro: só se atribuída a ele
     if (d.assignee_id === me) {
+      if (prefs && !prefs.assigned) return null;
       return {
         title: "Demanda atribuída a você",
         body: demandLabel(d),
@@ -160,6 +165,7 @@ export function decideDemandNotification(args: {
       d.assignee_id === me &&
       change.old.assignee_id !== me
     ) {
+      if (prefs && !prefs.assigned) return null;
       return {
         title: "Demanda atribuída a você",
         body: demandLabel(d),
@@ -169,6 +175,7 @@ export function decideDemandNotification(args: {
 
     // 2. Conclusão (todo|doing → done)
     if (d.status === "done" && change.old.status !== "done") {
+      if (prefs && !prefs.completed) return null;
       return {
         title: "Demanda concluída",
         body: demandLabel(d),
@@ -212,11 +219,13 @@ export function decideCommentNotification(args: {
   demand: Demand | null;
   me: string | null;
   role: Role;
+  prefs?: NotificationPrefs;
 }): Notification | null {
-  const { comment, demand, me, role } = args;
+  const { comment, demand, me, role, prefs } = args;
   if (!me) return null;
   if (comment.author_id === me) return null;
   if (!demand) return null;
+  if (prefs && !prefs.comments) return null;
 
   if (role === "member") {
     if (demand.assignee_id !== me && demand.created_by !== me) return null;

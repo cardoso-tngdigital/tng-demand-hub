@@ -52,6 +52,18 @@ fn hide_capture_window(app: tauri::AppHandle) {
     }
 }
 
+// Esconde a janela principal sem encerrar o app — usado quando o usuário
+// cancela a captura via Esc e a janela main já estava visível em segundo
+// plano. No macOS, esconder só a janela `capture` faz o sistema dar foco
+// automaticamente pra próxima janela do mesmo app (a main), o que abre
+// uma UI que o user não pediu. Esconder a main junto resolve.
+#[tauri::command]
+fn hide_main_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
 #[tauri::command]
 fn set_tray_badge(app: tauri::AppHandle, count: u32) {
     if let Some(tray) = app.tray_by_id("main-tray") {
@@ -319,6 +331,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             hide_capture_window,
+            hide_main_window,
             set_tray_badge,
             read_file_bytes,
             set_capture_hotkey,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { supabase } from "../lib/supabase/client";
-import { updateDemand, type DemandPatch } from "../lib/demands";
+import { deleteDemand, updateDemand, type DemandPatch } from "../lib/demands";
 import type { ClientOption, ProfileOption } from "../lib/lookups";
 import {
   buildPendingAttachment,
@@ -62,6 +62,7 @@ export function DemandDetailDrawer({
   clients,
   profiles,
   isAdmin,
+  currentUserId,
   onClose,
 }: {
   demand: Demand | null;
@@ -70,6 +71,9 @@ export function DemandDetailDrawer({
   // Propagado pra dentro: comments-thread usa pra esconder o botão "remover"
   // pra non-admins; futuramente o histórico também só aparece pra admin.
   isAdmin: boolean;
+  // Pra liberar "Excluir demanda" pra autor (além de admin) e checar
+  // permissão na thread de comentários.
+  currentUserId: string | null;
   onClose: () => void;
 }) {
   const open = demand !== null;
@@ -108,6 +112,7 @@ export function DemandDetailDrawer({
             clients={clients}
             profiles={profiles}
             isAdmin={isAdmin}
+            currentUserId={currentUserId}
             onClose={onClose}
           />
         )}
@@ -121,15 +126,34 @@ function DemandDetailBody({
   clients,
   profiles,
   isAdmin,
+  currentUserId,
   onClose,
 }: {
   demand: Demand;
   clients: ClientOption[];
   profiles: ProfileOption[];
   isAdmin: boolean;
+  currentUserId: string | null;
   onClose: () => void;
 }) {
   const editor = useDemandEditor(demand);
+  const canDelete = isAdmin || demand.created_by === currentUserId;
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function confirmDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    const { error } = await deleteDemand(demand.id);
+    setDeleting(false);
+    if (error) {
+      setDeleteError(error);
+      return;
+    }
+    setShowDeleteConfirm(false);
+    onClose();
+  }
 
   return (
     <>
@@ -301,7 +325,73 @@ function DemandDetailBody({
             />
           </Section>
         )}
+
+        {canDelete && (
+          <Section title="Zona de perigo">
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300 transition hover:border-red-500 hover:bg-red-500/20"
+            >
+              <i className="fa-solid fa-trash mr-1.5" aria-hidden="true" />
+              Excluir demanda
+            </button>
+            <p className="mt-1 text-[10px] text-tng-marine-400">
+              Apaga a demanda, todos os comentários, anexos e histórico. Esta
+              ação não pode ser desfeita.
+            </p>
+          </Section>
+        )}
       </div>
+
+      {showDeleteConfirm && (
+        <div
+          className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => !deleting && setShowDeleteConfirm(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-xl border border-red-500/40 bg-tng-marine-800 p-5 shadow-2xl"
+          >
+            <h3 className="font-sans text-sm font-semibold text-tng-marine-50">
+              Excluir demanda?
+            </h3>
+            <p className="mt-2 text-xs text-tng-marine-300">
+              <span className="text-tng-marine-100">
+                {demand.title || "(sem título)"}
+              </span>{" "}
+              será apagada permanentemente, junto com{" "}
+              {demand.comments_count} comentário
+              {demand.comments_count === 1 ? "" : "s"} e {demand.attachments_count} anexo
+              {demand.attachments_count === 1 ? "" : "s"}. Esta ação não pode
+              ser desfeita.
+            </p>
+            {deleteError && (
+              <p className="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="rounded-md border border-tng-marine-600 px-3 py-1.5 text-xs text-tng-marine-200 transition hover:border-tng-marine-400 hover:text-tng-marine-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDelete()}
+                disabled={deleting}
+                className="rounded-md border border-red-500 bg-red-500/20 px-3 py-1.5 text-xs text-red-200 transition hover:bg-red-500/30 disabled:opacity-50"
+              >
+                {deleting ? "Excluindo…" : "Excluir definitivamente"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -740,7 +830,7 @@ function AttachmentsList({ demandId }: { demandId: string }) {
               key={a.id}
               attachment={a}
               onOpenExternal={async () => {
-                const result = await openAttachmentPreview(a);
+                const result = await openAttachmentPreview(a, items ?? [a]);
                 if (!result.ok) {
                   setUploadErrors((prev) => [
                     ...prev,

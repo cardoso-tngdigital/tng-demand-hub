@@ -236,7 +236,13 @@ export function CaptureScreen() {
     });
   }, []);
 
-  async function closeWindow() {
+  // `cancelled=true` significa que o user fechou sem enviar (Esc ou botão
+  // Cancelar). Nesse caso a janela main também é escondida — caso contrário
+  // o macOS dá foco automaticamente pra próxima janela do app, "abrindo" o
+  // painel principal sem o user pedir. Quando uma demanda é enviada com
+  // sucesso, a janela main aparece naturalmente (comportamento desejado).
+  async function closeWindow(opts?: { cancelled?: boolean }) {
+    const cancelled = opts?.cancelled === true;
     attachments.forEach(disposePending);
     // Best-effort: apaga arquivos órfãos no Storage tmp caso o usuário tenha
     // gerado uploads e cancelado a captura. Falha silenciosa — o cleanup
@@ -256,6 +262,11 @@ export function CaptureScreen() {
     setCandidates([]);
     setTargetDemand(null);
     try {
+      if (cancelled) {
+        // Esconde a main ANTES da capture pra evitar flash do painel
+        // principal aparecendo por um frame.
+        await invoke("hide_main_window");
+      }
       await invoke("hide_capture_window");
     } catch (err) {
       console.error("[Capture] hide failed:", err);
@@ -265,7 +276,7 @@ export function CaptureScreen() {
   async function runExtraction() {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) {
-      await closeWindow();
+      await closeWindow({ cancelled: true });
       return;
     }
     if (!trimmed) {
@@ -556,7 +567,7 @@ export function CaptureScreen() {
         profiles={profiles}
         onPick={pickTarget}
         onConvertToCreate={convertToCreate}
-        onCancel={() => void closeWindow()}
+        onCancel={() => void closeWindow({ cancelled: true })}
         onBack={() => {
           setMode("input");
           setExtracted(null);
@@ -587,7 +598,7 @@ export function CaptureScreen() {
           onRemoveAttachment={removeAttachment}
           busy={busy}
           error={error}
-          onCancel={() => void closeWindow()}
+          onCancel={() => void closeWindow({ cancelled: true })}
           onBack={() => setMode("target")}
           onConfirm={(selected) => void saveEditMode(selected)}
         />
@@ -600,7 +611,7 @@ export function CaptureScreen() {
           initialContent={initial.descricao}
           busy={busy}
           error={error}
-          onCancel={() => void closeWindow()}
+          onCancel={() => void closeWindow({ cancelled: true })}
           onBack={() => setMode("target")}
           onConfirm={(content) => void saveCommentMode(content)}
         />
@@ -616,7 +627,7 @@ export function CaptureScreen() {
         onRemoveAttachment={removeAttachment}
         busy={busy}
         error={error}
-        onCancel={() => void closeWindow()}
+        onCancel={() => void closeWindow({ cancelled: true })}
         onBack={() => {
           setMode("input");
           setExtracted(null);
@@ -638,7 +649,7 @@ export function CaptureScreen() {
       busy={busy}
       error={error}
       onExtract={() => void runExtraction()}
-      onCancel={() => void closeWindow()}
+      onCancel={() => void closeWindow({ cancelled: true })}
       onManualSave={() => void saveManual()}
     />
   );

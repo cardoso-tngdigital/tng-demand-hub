@@ -57,15 +57,19 @@ type ViewState = {
 const INITIAL_VIEW: ViewState = { scale: 1, offsetX: 0, offsetY: 0 };
 
 export function PreviewScreen() {
-  const [payload, setPayload] = useState<PreviewPayload | null>(null);
+  const [bundle, setBundle] = useState<PreviewPayload | null>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [view, setView] = useState<ViewState>(INITIAL_VIEW);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  const current = bundle && bundle.items[currentIndex] ? bundle.items[currentIndex] : null;
+
   const hide = useCallback(async () => {
-    // Limpa o payload ANTES de esconder pra desmontar qualquer <video>
+    // Limpa o bundle ANTES de esconder pra desmontar qualquer <video>
     // ou <audio> em reprodução — esconder a janela só some o webview,
     // a mídia continua tocando senão.
-    setPayload(null);
+    setBundle(null);
+    setCurrentIndex(0);
     setView(INITIAL_VIEW);
     try {
       await getCurrentWindow().hide();
@@ -74,14 +78,37 @@ export function PreviewScreen() {
     }
   }, []);
 
+  const goPrev = useCallback(() => {
+    setBundle((b) => {
+      if (!b || b.items.length <= 1) return b;
+      setCurrentIndex((i) => (i - 1 + b.items.length) % b.items.length);
+      setView(INITIAL_VIEW);
+      return b;
+    });
+  }, []);
+
+  const goNext = useCallback(() => {
+    setBundle((b) => {
+      if (!b || b.items.length <= 1) return b;
+      setCurrentIndex((i) => (i + 1) % b.items.length);
+      setView(INITIAL_VIEW);
+      return b;
+    });
+  }, []);
+
   useEffect(() => {
     const unlisten = listen<PreviewPayload>("preview:open", (event) => {
-      setPayload(event.payload);
+      const p = event.payload;
+      setBundle(p);
+      setCurrentIndex(p.currentIndex);
       setView(INITIAL_VIEW);
-      void getCurrentWindow()
-        .setTitle(event.payload.name)
-        .catch(() => undefined);
-      // Foca o container raiz pra que Esc / +/- / 0 funcionem antes do
+      const first = p.items[p.currentIndex];
+      if (first) {
+        void getCurrentWindow()
+          .setTitle(first.name)
+          .catch(() => undefined);
+      }
+      // Foca o container raiz pra que Esc / +/- / 0 / ←/→ funcionem antes do
       // user clicar em qualquer lugar. Quando o foco vai pro iframe do
       // PDF, esse keydown deixa de chegar — daí o botão Fechar visível.
       window.setTimeout(() => rootRef.current?.focus(), 50);
@@ -90,6 +117,12 @@ export function PreviewScreen() {
       void unlisten.then((fn) => fn());
     };
   }, []);
+
+  // Atualiza o título do app quando user navega entre anexos.
+  useEffect(() => {
+    if (!current) return;
+    void getCurrentWindow().setTitle(current.name).catch(() => undefined);
+  }, [current]);
 
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested((e) => {
@@ -106,7 +139,7 @@ export function PreviewScreen() {
   // nunca recebe o Escape. A solução é registrar um atalho global escopo
   // por foco — só ativo enquanto a preview está em primeiro plano, evita
   // sequestrar o Esc de outros apps.
-  const isPdf = payload?.mime === "application/pdf";
+  const isPdf = current?.mime === "application/pdf";
   useEffect(() => {
     if (!isPdf) return;
 
@@ -116,24 +149,32 @@ export function PreviewScreen() {
     async function reg() {
       if (registered || cancelled) return;
       try {
-        if (await gsIsRegistered("Escape")) {
-          await gsUnregister("Escape");
+        for (const acc of ["Escape", "ArrowLeft", "ArrowRight"]) {
+          if (await gsIsRegistered(acc)) await gsUnregister(acc);
         }
         await gsRegister("Escape", (e) => {
           if (e.state === "Pressed") void hide();
         });
+        await gsRegister("ArrowLeft", (e) => {
+          if (e.state === "Pressed") goPrev();
+        });
+        await gsRegister("ArrowRight", (e) => {
+          if (e.state === "Pressed") goNext();
+        });
         registered = true;
       } catch (err) {
-        console.error("[Preview] register Esc failed:", err);
+        console.error("[Preview] register globals failed:", err);
       }
     }
 
     async function unreg() {
       if (!registered) return;
       try {
-        await gsUnregister("Escape");
+        for (const acc of ["Escape", "ArrowLeft", "ArrowRight"]) {
+          await gsUnregister(acc).catch(() => undefined);
+        }
       } catch (err) {
-        console.error("[Preview] unregister Esc failed:", err);
+        console.error("[Preview] unregister globals failed:", err);
       } finally {
         registered = false;
       }
@@ -160,7 +201,7 @@ export function PreviewScreen() {
       unlistenFocus?.();
       void unreg();
     };
-  }, [isPdf, hide]);
+  }, [isPdf, hide, goPrev, goNext]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -176,24 +217,30 @@ export function PreviewScreen() {
       } else if (e.key === "0") {
         e.preventDefault();
         setView(INITIAL_VIEW);
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goNext();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [hide]);
+  }, [hide, goPrev, goNext]);
 
   function handleDownload() {
-    if (!payload) return;
+    if (!current) return;
     const a = document.createElement("a");
-    a.href = payload.url;
-    a.download = payload.name;
+    a.href = current.url;
+    a.download = current.name;
     a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
     a.remove();
   }
 
-  if (!payload) {
+  if (!current || !bundle) {
     return (
       <div className="flex h-screen items-center justify-center bg-tng-marine-900">
         <p className="text-sm text-tng-marine-300">Aguardando arquivo…</p>
@@ -201,8 +248,9 @@ export function PreviewScreen() {
     );
   }
 
-  const category = categorize(payload.mime);
+  const category = categorize(current.mime);
   const showZoomControls = category === "image";
+  const hasMultiple = bundle.items.length > 1;
 
   return (
     <div
@@ -211,13 +259,42 @@ export function PreviewScreen() {
       className="flex h-screen flex-col bg-tng-marine-900 outline-none"
     >
       <header className="flex items-center justify-between border-b border-tng-marine-700/60 bg-tng-marine-800 px-4 py-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-tng-marine-50">
-            {payload.name}
-          </p>
-          <p className="text-[11px] text-tng-marine-300">
-            {formatBytes(payload.sizeBytes)} · {payload.mime}
-          </p>
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {hasMultiple && (
+            <button
+              type="button"
+              onClick={goPrev}
+              className="rounded-md p-1.5 text-tng-marine-300 transition hover:bg-tng-marine-700 hover:text-tng-marine-100"
+              aria-label="Anexo anterior"
+              title="Anterior (←)"
+            >
+              <i className="fa-solid fa-chevron-left" aria-hidden="true" />
+            </button>
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-tng-marine-50">
+              {current.name}
+            </p>
+            <p className="text-[11px] text-tng-marine-300">
+              {formatBytes(current.sizeBytes)} · {current.mime}
+              {hasMultiple && (
+                <span className="ml-2 text-tng-marine-400">
+                  · {currentIndex + 1} / {bundle.items.length}
+                </span>
+              )}
+            </p>
+          </div>
+          {hasMultiple && (
+            <button
+              type="button"
+              onClick={goNext}
+              className="rounded-md p-1.5 text-tng-marine-300 transition hover:bg-tng-marine-700 hover:text-tng-marine-100"
+              aria-label="Próximo anexo"
+              title="Próximo (→)"
+            >
+              <i className="fa-solid fa-chevron-right" aria-hidden="true" />
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {showZoomControls && (
@@ -268,11 +345,11 @@ export function PreviewScreen() {
       </header>
 
       <div className="flex-1 overflow-hidden">
-        <ViewerErrorBoundary key={payload.url}>
+        <ViewerErrorBoundary key={current.url}>
         {category === "image" ? (
           <ImageStage
-            url={payload.url}
-            alt={payload.name}
+            url={current.url}
+            alt={current.name}
             view={view}
             onViewChange={setView}
           />
@@ -282,38 +359,38 @@ export function PreviewScreen() {
               <div className="mb-4 text-5xl text-tng-marine-300">
                 <i className="fa-solid fa-music" aria-hidden="true" />
               </div>
-              <audio controls src={payload.url} className="w-full" />
+              <audio controls src={current.url} className="w-full" />
             </div>
           </div>
         ) : category === "video" ? (
           <div className="flex h-full items-center justify-center bg-black p-4">
             <video
               controls
-              src={payload.url}
+              src={current.url}
               className="max-h-full max-w-full rounded shadow-lg"
             />
           </div>
         ) : category === "pdf" ? (
           <iframe
-            src={payload.url}
-            title={payload.name}
+            src={current.url}
+            title={current.name}
             className="h-full w-full border-0 bg-white"
           />
-        ) : isDocx(payload.mime) ? (
-          <DocxView url={payload.url} />
-        ) : isXlsx(payload.mime) ? (
-          <XlsxView url={payload.url} />
-        ) : isCsv(payload.mime) ? (
-          <CsvView url={payload.url} />
-        ) : isPlainText(payload.mime) ? (
-          <PlainTextView url={payload.url} />
+        ) : isDocx(current.mime) ? (
+          <DocxView url={current.url} />
+        ) : isXlsx(current.mime) ? (
+          <XlsxView url={current.url} />
+        ) : isCsv(current.mime) ? (
+          <CsvView url={current.url} />
+        ) : isPlainText(current.mime) ? (
+          <PlainTextView url={current.url} />
         ) : (
           <div className="flex h-full items-center justify-center p-8">
             <div className="rounded-lg bg-tng-marine-800/80 p-8 text-center">
               <div className="mb-3 text-5xl text-tng-marine-300">
                 <i className={categoryIconClass(category)} aria-hidden="true" />
               </div>
-              <p className="mb-1 text-sm text-tng-marine-100">{payload.name}</p>
+              <p className="mb-1 text-sm text-tng-marine-100">{current.name}</p>
               <p className="text-xs text-tng-marine-300">
                 Pré-visualização não suportada — use “Baixar”.
               </p>
