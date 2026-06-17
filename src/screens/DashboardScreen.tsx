@@ -12,6 +12,7 @@ import {
 } from "../lib/notifications";
 import {
   decideCommentNotification,
+  decideMentionNotification,
   decideDemandNotification,
 } from "../lib/notificationDecider";
 import { setTrayBadge } from "../lib/tray";
@@ -298,10 +299,25 @@ export function DashboardScreen() {
   // notificar fica no decider (admin vê tudo; membro só sobre demandas dele).
   useEffect(() => {
     const unsubscribe = subscribeToAllCommentInserts((comment) => {
+      const demand =
+        demandsRef.current.find((d) => d.id === comment.demand_id) ?? null;
+      // Menção tem prioridade — quando o user é mencionado, sempre notifica
+      // (mesmo que ele não seja envolvido na demanda). Se o decider de menção
+      // disparou, NÃO cai no decider genérico de comentário pra evitar 2
+      // notificações pro mesmo evento.
+      const mentionNotif = decideMentionNotification({
+        comment,
+        demand,
+        me: currentUserIdRef.current,
+        prefs: notificationPrefsRef.current,
+      });
+      if (mentionNotif) {
+        void notifyAboutDemand(mentionNotif.title, mentionNotif.body, mentionNotif.demandId);
+        return;
+      }
       const notif = decideCommentNotification({
         comment,
-        demand:
-          demandsRef.current.find((d) => d.id === comment.demand_id) ?? null,
+        demand,
         me: currentUserIdRef.current,
         role: isAdminRef.current ? "admin" : "member",
         prefs: notificationPrefsRef.current,

@@ -6,6 +6,7 @@ import {
   subscribeToComments,
 } from "../lib/comments";
 import {
+  extractMentionIdsFromHtml,
   isHtmlEmpty,
   legacyToHtml,
   sanitizeHtml,
@@ -107,9 +108,12 @@ export function CommentsThread({
   const handleSubmit = useCallback(async () => {
     if (isHtmlEmpty(draft) || submitting) return;
     const payload = sanitizeHtml(draft);
+    // Extrai menções a partir do HTML *já sanitizado* pra garantir que ids
+    // fora do schema (rejeitados pelo DOMPurify) não vazem pra notificação.
+    const mentions = extractMentionIdsFromHtml(payload);
     setSubmitting(true);
     setError(null);
-    const { data, error } = await createComment(demandId, payload);
+    const { data, error } = await createComment(demandId, payload, mentions);
     setSubmitting(false);
     if (error) {
       setError(error);
@@ -134,6 +138,7 @@ export function CommentsThread({
         onChange={setDraft}
         onSubmit={handleSubmit}
         submitting={submitting}
+        mentionProfiles={profiles}
       />
 
       {error && <p className="text-[11px] text-red-300">{error}</p>}
@@ -204,11 +209,13 @@ function NewCommentForm({
   onChange,
   onSubmit,
   submitting,
+  mentionProfiles,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
   submitting: boolean;
+  mentionProfiles: ProfileOption[];
 }) {
   // Submit por ⌘↵ — captura no nível da janela enquanto o form existe.
   useEffect(() => {
@@ -235,13 +242,14 @@ function NewCommentForm({
         <RichTextEditor
           value={value}
           onChange={onChange}
-          placeholder="Comentar…"
+          placeholder="Comentar… (use @ para marcar alguém)"
           variant="compact"
+          mentionProfiles={mentionProfiles}
         />
       </div>
       <div className="flex items-center justify-between">
         <span className="text-[10px] text-tng-marine-400">
-          <kbd className="rounded bg-tng-marine-700 px-1">⌘↵</kbd> envia · cole texto formatado direto
+          <kbd className="rounded bg-tng-marine-700 px-1">⌘↵</kbd> envia · digite <kbd className="rounded bg-tng-marine-700 px-1">@</kbd> para marcar
         </span>
         <button
           type="button"

@@ -60,7 +60,9 @@ export function NotificationSettings({
   }
 
   function toggle(key: keyof NotificationPrefs) {
-    void save({ ...prefs, [key]: !prefs[key] });
+    // `mentions` é opcional no tipo — fallback pra true quando ausente.
+    const current = prefs[key] ?? true;
+    void save({ ...prefs, [key]: !current });
   }
 
   return (
@@ -112,6 +114,12 @@ export function NotificationSettings({
                 description="Novos comentários em demandas que estou envolvido."
                 checked={prefs.comments}
                 onToggle={() => toggle("comments")}
+              />
+              <ToggleRow
+                label="Menções (@usuario)"
+                description="Quando alguém me marca em um comentário."
+                checked={prefs.mentions ?? true}
+                onToggle={() => toggle("mentions")}
               />
               <ToggleRow
                 label="Demandas concluídas"

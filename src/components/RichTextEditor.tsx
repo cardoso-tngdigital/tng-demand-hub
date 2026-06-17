@@ -12,15 +12,39 @@
 //   só dispara no submit), aqui só repassamos.
 // - Paste rich text é nativo do tiptap; HTML colado é normalizado contra o
 //   schema dos plugins ativos — qualquer coisa fora é descartada com graça.
+// - Mention opcional: quando `mentionProfiles` é fornecido, habilita extension
+//   com dropdown próprio (sem Tippy). Salvamos como `<span data-type="mention"
+//   data-id="...">@nome</span>` — sanitizer e extractMentionIdsFromHtml já
+//   conhecem esse formato.
 // =============================================================================
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import type { AnyExtension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
+import Mention from "@tiptap/extension-mention";
+import type { ProfileOption } from "../lib/lookups";
 
 export type RichTextVariant = "full" | "compact";
+
+type MentionState = {
+  open: boolean;
+  items: ProfileOption[];
+  selectedIndex: number;
+  coords: { left: number; top: number } | null;
+  command: ((item: { id: string; label: string }) => void) | null;
+};
+
+const EMPTY_MENTION_STATE: MentionState = {
+  open: false,
+  items: [],
+  selectedIndex: 0,
+  coords: null,
+  command: null,
+};
 
 export function RichTextEditor({
   value,
@@ -30,6 +54,7 @@ export function RichTextEditor({
   variant = "full",
   autoFocus = false,
   minHeight,
+  mentionProfiles,
 }: {
   value: string;
   onChange: (html: string) => void;
@@ -38,9 +63,27 @@ export function RichTextEditor({
   variant?: RichTextVariant;
   autoFocus?: boolean;
   minHeight?: number;
+  mentionProfiles?: ProfileOption[];
 }) {
-  const editor = useEditor({
-    extensions: [
+  // Mantemos o state da sugestão fora do editor para poder renderizar em portal.
+  const [mention, setMention] = useState<MentionState>(EMPTY_MENTION_STATE);
+  // Refs estáveis pra callbacks do tiptap (que são criados uma vez na config).
+  const mentionRef = useRef(mention);
+  mentionRef.current = mention;
+  const profilesRef = useRef(mentionProfiles);
+  profilesRef.current = mentionProfiles;
+
+  const filterProfiles = useCallback((query: string): ProfileOption[] => {
+    const all = profilesRef.current ?? [];
+    if (!query) return all.slice(0, 8);
+    const q = query.toLowerCase();
+    return all
+      .filter((p) => p.full_name.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, []);
+
+  const extensions = useMemo(() => {
+    const exts: AnyExtension[] = [
       StarterKit.configure({
         heading: { levels: [2, 3] },
         codeBlock: false,
@@ -63,7 +106,90 @@ export function RichTextEditor({
         placeholder: placeholder ?? "",
         emptyEditorClass: "is-editor-empty",
       }),
-    ],
+    ];
+
+    if (mentionProfiles) {
+      exts.push(
+        Mention.configure({
+          HTMLAttributes: { class: "tng-mention" },
+          renderText: ({ node }) => `@${node.attrs.label ?? node.attrs.id}`,
+          suggestion: {
+            items: ({ query }) => filterProfiles(query),
+            render: () => {
+              return {
+                onStart: (props) => {
+                  const items = props.items as ProfileOption[];
+                  const rect = props.clientRect?.();
+                  setMention({
+                    open: true,
+                    items,
+                    selectedIndex: 0,
+                    coords: rect ? { left: rect.left, top: rect.bottom + 4 } : null,
+                    command: (item) => props.command(item),
+                  });
+                },
+                onUpdate: (props) => {
+                  const items = props.items as ProfileOption[];
+                  const rect = props.clientRect?.();
+                  setMention((prev) => ({
+                    ...prev,
+                    open: true,
+                    items,
+                    selectedIndex: 0,
+                    coords: rect ? { left: rect.left, top: rect.bottom + 4 } : prev.coords,
+                    command: (item) => props.command(item),
+                  }));
+                },
+                onKeyDown: (props) => {
+                  const state = mentionRef.current;
+                  if (!state.open) return false;
+                  const len = state.items.length;
+                  if (props.event.key === "ArrowDown") {
+                    if (len === 0) return true;
+                    setMention((s) => ({
+                      ...s,
+                      selectedIndex: (s.selectedIndex + 1) % len,
+                    }));
+                    return true;
+                  }
+                  if (props.event.key === "ArrowUp") {
+                    if (len === 0) return true;
+                    setMention((s) => ({
+                      ...s,
+                      selectedIndex: (s.selectedIndex - 1 + len) % len,
+                    }));
+                    return true;
+                  }
+                  if (props.event.key === "Enter" || props.event.key === "Tab") {
+                    if (len === 0) return false;
+                    const item = state.items[state.selectedIndex];
+                    state.command?.({ id: item.id, label: item.full_name });
+                    return true;
+                  }
+                  if (props.event.key === "Escape") {
+                    setMention(EMPTY_MENTION_STATE);
+                    return true;
+                  }
+                  return false;
+                },
+                onExit: () => {
+                  setMention(EMPTY_MENTION_STATE);
+                },
+              };
+            },
+          },
+        }),
+      );
+    }
+    return exts;
+    // mentionProfiles é redeclarado a cada render; só o "tem ou não tem" muda a
+    // config — recriar o editor toda vez que a lista muda perderia foco. Usamos
+    // ref interno (profilesRef) pra ler a versão mais nova nos callbacks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(mentionProfiles)]);
+
+  const editor = useEditor({
+    extensions,
     content: value || "",
     autofocus: autoFocus,
     editorProps: {
@@ -94,7 +220,62 @@ export function RichTextEditor({
     <div className={wrapperClass(variant)}>
       <Toolbar editor={editor} variant={variant} />
       <EditorContent editor={editor} />
+      {mention.open && mention.coords && mention.items.length > 0 && (
+        <MentionDropdown
+          items={mention.items}
+          selectedIndex={mention.selectedIndex}
+          coords={mention.coords}
+          onPick={(item) => {
+            mention.command?.({ id: item.id, label: item.full_name });
+          }}
+          onHover={(idx) => setMention((s) => ({ ...s, selectedIndex: idx }))}
+        />
+      )}
     </div>
+  );
+}
+
+function MentionDropdown({
+  items,
+  selectedIndex,
+  coords,
+  onPick,
+  onHover,
+}: {
+  items: ProfileOption[];
+  selectedIndex: number;
+  coords: { left: number; top: number };
+  onPick: (item: ProfileOption) => void;
+  onHover: (idx: number) => void;
+}) {
+  return createPortal(
+    <ul
+      role="listbox"
+      style={{ left: coords.left, top: coords.top }}
+      className="fixed z-[100] max-h-56 w-56 overflow-y-auto rounded-md border border-tng-marine-600 bg-tng-marine-800 py-1 shadow-xl"
+    >
+      {items.map((item, idx) => (
+        <li
+          key={item.id}
+          role="option"
+          aria-selected={idx === selectedIndex}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onPick(item);
+          }}
+          onMouseEnter={() => onHover(idx)}
+          className={[
+            "cursor-pointer px-2.5 py-1.5 text-xs",
+            idx === selectedIndex
+              ? "bg-tng-orange-400/20 text-tng-orange-100"
+              : "text-tng-marine-100 hover:bg-tng-marine-700",
+          ].join(" ")}
+        >
+          @{item.full_name}
+        </li>
+      ))}
+    </ul>,
+    document.body,
   );
 }
 

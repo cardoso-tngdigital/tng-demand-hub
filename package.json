@@ -1,7 +1,7 @@
 {
   "name": "tng-demand-hub",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,9 +22,11 @@
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@tiptap/core": "^3.26.0",
     "@tiptap/extension-link": "^3.26.0",
+    "@tiptap/extension-mention": "^3.26.0",
     "@tiptap/extension-placeholder": "^3.26.0",
     "@tiptap/react": "^3.26.0",
     "@tiptap/starter-kit": "^3.26.0",
+    "@tiptap/suggestion": "^3.26.0",
     "browser-image-compression": "^2.0.2",
     "isomorphic-dompurify": "^3.16.0",
     "mammoth": "^1.12.0",

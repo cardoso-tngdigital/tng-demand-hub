@@ -20,6 +20,7 @@ export async function listComments(
 export async function createComment(
   demandId: string,
   content: string,
+  mentions: string[] = [],
 ): Promise<{ data: Comment | null; error: string | null }> {
   const trimmed = content.trim();
   if (!trimmed) return { data: null, error: "Comentário vazio." };
@@ -32,12 +33,18 @@ export async function createComment(
     return { data: null, error: "Você precisa estar logado para comentar." };
   }
 
+  // Remove auto-menções (mencionar a si mesmo não dispara notificação).
+  const cleanedMentions = Array.from(new Set(mentions)).filter(
+    (id) => id !== user.id,
+  );
+
   const { data, error } = await supabase
     .from("comments")
     .insert({
       demand_id: demandId,
       author_id: user.id,
       content: trimmed,
+      mentions: cleanedMentions,
     })
     .select("*")
     .single();

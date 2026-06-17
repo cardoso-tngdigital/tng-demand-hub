@@ -33,14 +33,47 @@ const ALLOWED_TAGS = [
   "h2",
   "h3",
   "a",
+  "span",
 ];
-const ALLOWED_ATTR = ["href", "target", "rel"];
+// Mantemos só atributos necessários — `class` é usado pelo Mention pra estilizar
+// (.tng-mention), `data-*` carregam id/label/tipo da menção pra renderização e
+// extração no servidor.
+const ALLOWED_ATTR = [
+  "href",
+  "target",
+  "rel",
+  "class",
+  "data-type",
+  "data-id",
+  "data-label",
+];
 
 export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
   });
+}
+
+/**
+ * Extrai os user_ids únicos das menções (`<span data-type="mention"
+ * data-id="...">`) presentes no HTML. Usado para popular `comments.mentions`
+ * antes de inserir no banco.
+ *
+ * Regex em vez de DOMParser porque a função roda no main thread durante o
+ * submit do comentário; perfomance não importa, mas evita dependência de DOM
+ * pra ficar testável em isolamento.
+ */
+export function extractMentionIdsFromHtml(html: string): string[] {
+  if (!html) return [];
+  const ids = new Set<string>();
+  const re = /<span[^>]*data-type=["']mention["'][^>]*data-id=["']([^"']+)["']/gi;
+  // Aceita também a ordem invertida (data-id antes de data-type).
+  const reReverse = /<span[^>]*data-id=["']([^"']+)["'][^>]*data-type=["']mention["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) ids.add(m[1]);
+  while ((m = reReverse.exec(html)) !== null) ids.add(m[1]);
+  return Array.from(ids);
 }
 
 // Detecta marcadores comuns de markdown.

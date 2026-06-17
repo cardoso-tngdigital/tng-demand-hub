@@ -17,6 +17,9 @@ export interface NotificationPrefs {
   due_soon: boolean;
   comments: boolean;
   completed: boolean;
+  // Menções (@usuario) em comentários. Quando ausente em registros antigos,
+  // tratamos como true (default) — código consumidor usa nullish coalescing.
+  mentions?: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
@@ -24,6 +27,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   due_soon: true,
   comments: true,
   completed: true,
+  mentions: true,
 };
 
 export interface Profile {

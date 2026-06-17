@@ -225,6 +225,11 @@ export function decideCommentNotification(args: {
   if (!me) return null;
   if (comment.author_id === me) return null;
   if (!demand) return null;
+
+  // Menção tem prioridade: se o user foi mencionado neste comentário, sempre
+  // notifica (a menos que o pref de menções esteja desligado). Caller deve
+  // ter chamado decideMentionNotification ANTES — esta função volta a ser o
+  // caminho do "comentário normal" e respeita o pref `comments`.
   if (prefs && !prefs.comments) return null;
 
   if (role === "member") {
@@ -235,5 +240,36 @@ export function decideCommentNotification(args: {
     title: `Comentário em "${demandLabel(demand)}"`,
     body: htmlToPlainText(legacyToHtml(comment.content)).slice(0, 140),
     demandId: demand.id,
+  };
+}
+
+/**
+ * Notificação específica de menção (`@usuario`). Tem prioridade sobre a
+ * notificação genérica de comentário — quando o user é mencionado, queremos
+ * que ele saiba mesmo se não for assignee/criador da demanda, e mesmo se
+ * desligou notificações de comentários "normais".
+ *
+ * Respeita `prefs.mentions` (default: true). Não filtra por role — menção é
+ * direcionada, então mesmo admin/membro fora do escopo da demanda é
+ * notificado quando o nome dele aparece.
+ */
+export function decideMentionNotification(args: {
+  comment: Comment;
+  demand: Demand | null;
+  me: string | null;
+  prefs?: NotificationPrefs;
+}): Notification | null {
+  const { comment, demand, me, prefs } = args;
+  if (!me) return null;
+  if (comment.author_id === me) return null;
+  if (!comment.mentions || !comment.mentions.includes(me)) return null;
+  // `mentions` é opcional no schema — quando ausente, default é true.
+  if (prefs && prefs.mentions === false) return null;
+
+  const label = demand ? demandLabel(demand) : "uma demanda";
+  return {
+    title: `Você foi mencionado em "${label}"`,
+    body: htmlToPlainText(legacyToHtml(comment.content)).slice(0, 140),
+    demandId: comment.demand_id,
   };
 }

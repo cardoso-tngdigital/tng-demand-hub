@@ -1246,6 +1246,33 @@ Quando reativar:
 - Correção de bugs do uso real
 - Documentação de uso interna
 
+## Sprint 15 — Hot-fix + Menções (v0.1.6) — 2026-06-17
+
+Resposta a feedback do v0.1.5: erro de FK ao excluir demanda com comentários
+e pedido de menção `@usuario` nos comentários (estilo Trello/Notion).
+
+- ✅ **Fix: FK violation no DELETE de demanda — 2026-06-17.**
+  Migration `20260617000001_fix_demand_history_cascade.sql` adiciona guard no
+  trigger `demand_history_track_comments`: quando o CASCADE em comments
+  dispara durante a exclusão da demand, o trigger pulava a inserção em
+  `demand_history` se a demand não existir mais (caso de cascade). Sem o
+  guard, a FK `demand_history.demand_id → demands.id` violava dentro da
+  mesma transação.
+- ✅ **Menções @usuario em comentários — 2026-06-17.**
+  Tiptap `@tiptap/extension-mention` com dropdown próprio (sem Tippy), ↑↓
+  pra navegar, Enter/Tab pra escolher, Esc fecha. Lista filtrável conforme
+  digita. Profiles vêm da prop `mentionProfiles` no `RichTextEditor`.
+  Sanitizer aceita `<span data-type="mention" data-id="...">` (e novos data
+  attrs em geral). Helper `extractMentionIdsFromHtml(html)` popula o array
+  `comments.mentions` (coluna já existia, era só wire). Render com chip
+  laranja discreto em `.tng-mention` (CSS em `index.css`).
+- ✅ **Notificação de menção dedicada — 2026-06-17.**
+  `decideMentionNotification` em `notificationDecider.ts`. Tem prioridade
+  sobre `decideCommentNotification` — usuário mencionado é sempre avisado
+  mesmo que não esteja envolvido na demanda. Respeita novo pref
+  `NotificationPrefs.mentions` (default true). Toggle novo em
+  `NotificationSettings.tsx` ("Menções (@usuario)").
+
 ## Sprint 14 — Pós-Beta Interno (v0.1.5) — 2026-06-16
 
 12 features baseadas em feedback dos membros que testaram v0.1.4. Tudo
