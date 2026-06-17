@@ -6,7 +6,12 @@ import {
   updateClient,
   type ClientInput,
 } from "../lib/clients";
-import type { Client } from "../types/database";
+import type { Client, ClientLink } from "../types/database";
+
+// Garante pelo menos uma linha vazia visível pra UX previsível dos forms.
+const emptyLink = (): ClientLink => ({ label: "", url: "" });
+const initLinks = (existing: ClientLink[] | undefined): ClientLink[] =>
+  existing && existing.length > 0 ? existing.map((l) => ({ ...l })) : [emptyLink()];
 
 export function ClientsAdmin({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [clients, setClients] = useState<Client[]>([]);
@@ -254,34 +259,12 @@ function ClientForm({
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
-  const [googleBusinessUrl, setGoogleBusinessUrl] = useState(
-    initial?.google_business_url ?? "",
-  );
-  // Lista dinâmica do Drive — sempre garante 1 input visível pra digitar.
-  // Quando salvamos, vazios são limpos no lib/clients.ts.
-  const [driveUrls, setDriveUrls] = useState<string[]>(
-    initial?.drive_urls && initial.drive_urls.length > 0 ? initial.drive_urls : [""],
-  );
-  const [whatsappGroupUrl, setWhatsappGroupUrl] = useState(
-    initial?.whatsapp_group_url ?? "",
-  );
+  // 3 arrays dinâmicos de {label,url}. Cada um sempre tem pelo menos 1 linha
+  // visível pra UX previsível. Vazios são limpos no lib/clients.ts antes do save.
+  const [gmnLinks, setGmnLinks] = useState<ClientLink[]>(initLinks(initial?.google_business_urls));
+  const [waLinks, setWaLinks] = useState<ClientLink[]>(initLinks(initial?.whatsapp_group_urls));
+  const [driveLinks, setDriveLinks] = useState<ClientLink[]>(initLinks(initial?.drive_urls));
   const [submitting, setSubmitting] = useState(false);
-
-  function updateDriveUrl(idx: number, value: string) {
-    setDriveUrls((prev) => prev.map((u, i) => (i === idx ? value : u)));
-  }
-
-  function addDriveUrl() {
-    setDriveUrls((prev) => [...prev, ""]);
-  }
-
-  function removeDriveUrl(idx: number) {
-    setDriveUrls((prev) => {
-      const next = prev.filter((_, i) => i !== idx);
-      // Mantém ao menos 1 campo vazio pra UX previsível.
-      return next.length === 0 ? [""] : next;
-    });
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -293,9 +276,9 @@ function ClientForm({
       email: email || null,
       phone: phone || null,
       notes: notes || null,
-      google_business_url: googleBusinessUrl || null,
-      drive_urls: driveUrls,
-      whatsapp_group_url: whatsappGroupUrl || null,
+      google_business_urls: gmnLinks,
+      drive_urls: driveLinks,
+      whatsapp_group_urls: waLinks,
     });
     setSubmitting(false);
   }
@@ -339,57 +322,34 @@ function ClientForm({
         </Field>
       </div>
 
-      <div className="col-span-2 grid grid-cols-2 gap-3 border-t border-tng-marine-700 pt-3">
-        <Field label="Google Meu Negócio">
-          <input
-            type="url"
-            placeholder="https://g.page/…"
-            value={googleBusinessUrl}
-            onChange={(e) => setGoogleBusinessUrl(e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Grupo do WhatsApp">
-          <input
-            type="url"
-            placeholder="https://chat.whatsapp.com/…"
-            value={whatsappGroupUrl}
-            onChange={(e) => setWhatsappGroupUrl(e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <div className="col-span-2">
-          <Field label="Links do Google Drive">
-            <div className="space-y-1.5">
-              {driveUrls.map((url, idx) => (
-                <div key={idx} className="flex items-center gap-1.5">
-                  <input
-                    type="url"
-                    placeholder="https://drive.google.com/…"
-                    value={url}
-                    onChange={(e) => updateDriveUrl(idx, e.target.value)}
-                    className={`${inputClass} flex-1`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeDriveUrl(idx)}
-                    disabled={driveUrls.length === 1 && url === ""}
-                    aria-label="Remover link"
-                    className="shrink-0 rounded-md border border-tng-marine-600 px-2 py-1 text-[10px] text-tng-marine-300 hover:border-red-400 hover:text-red-300 disabled:opacity-30"
-                  >
-                    <i className="fa-solid fa-xmark" aria-hidden="true" />                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={addDriveUrl}
-                className="text-[11px] text-tng-orange-300 hover:text-tng-orange-200"
-              >
-                + adicionar mais um link
-              </button>
-            </div>
-          </Field>
-        </div>
+      <div className="col-span-2 grid grid-cols-1 gap-4 border-t border-tng-marine-700 pt-4 md:grid-cols-3">
+        <LinkArrayInput
+          fieldLabel="Google Meu Negócio"
+          iconClass="fa-solid fa-store"
+          accent="sky"
+          items={gmnLinks}
+          onChange={setGmnLinks}
+          urlPlaceholder="https://share.google/…"
+          labelPlaceholder="Ex: Unidade Centro"
+        />
+        <LinkArrayInput
+          fieldLabel="Grupo do WhatsApp"
+          iconClass="fa-brands fa-whatsapp"
+          accent="emerald"
+          items={waLinks}
+          onChange={setWaLinks}
+          urlPlaceholder="https://chat.whatsapp.com/…"
+          labelPlaceholder="Ex: Unidade Centro"
+        />
+        <LinkArrayInput
+          fieldLabel="Google Drive"
+          iconClass="fa-brands fa-google-drive"
+          accent="orange"
+          items={driveLinks}
+          onChange={setDriveLinks}
+          urlPlaceholder="https://drive.google.com/…"
+          labelPlaceholder="Ex: Materiais gerais"
+        />
       </div>
 
       <div className="col-span-2 flex items-center justify-end gap-2">
@@ -409,6 +369,95 @@ function ClientForm({
         </button>
       </div>
     </form>
+  );
+}
+
+type LinkAccent = "sky" | "emerald" | "orange";
+
+// Lista dinâmica de pares (label, url). Reusada nas 3 categorias de link do
+// cliente. Visualmente: header com ícone colorido pra identificar a categoria,
+// cards leves sem borda, fundo do WhatsApp levemente esverdeado pra diferenciar.
+function LinkArrayInput({
+  fieldLabel,
+  iconClass,
+  accent,
+  items,
+  onChange,
+  urlPlaceholder,
+  labelPlaceholder,
+}: {
+  fieldLabel: string;
+  iconClass: string;
+  accent: LinkAccent;
+  items: ClientLink[];
+  onChange: (next: ClientLink[]) => void;
+  urlPlaceholder: string;
+  labelPlaceholder: string;
+}) {
+  function update(idx: number, patch: Partial<ClientLink>) {
+    onChange(items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+  }
+  function add() {
+    onChange([...items, emptyLink()]);
+  }
+  function remove(idx: number) {
+    const next = items.filter((_, i) => i !== idx);
+    onChange(next.length === 0 ? [emptyLink()] : next);
+  }
+
+  const iconColor =
+    accent === "emerald"
+      ? "text-emerald-400"
+      : accent === "orange"
+        ? "text-tng-orange-300"
+        : "text-sky-400";
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <i className={`${iconClass} ${iconColor} text-xs`} aria-hidden="true" />
+        <span className="text-[10px] uppercase tracking-wider text-tng-marine-200">
+          {fieldLabel}
+        </span>
+      </div>
+      <div className="space-y-1.5">
+        {items.map((it, idx) => (
+          <div key={idx} className="group relative rounded-md bg-tng-marine-900/40 p-2 pr-7">
+            <input
+              type="text"
+              placeholder={labelPlaceholder}
+              value={it.label}
+              onChange={(e) => update(idx, { label: e.target.value })}
+              className={`${inputClass} mb-1 text-xs`}
+            />
+            <input
+              type="url"
+              placeholder={urlPlaceholder}
+              value={it.url}
+              onChange={(e) => update(idx, { url: e.target.value })}
+              className={inputClass}
+            />
+            <button
+              type="button"
+              onClick={() => remove(idx)}
+              disabled={items.length === 1 && it.label === "" && it.url === ""}
+              aria-label="Remover link"
+              title="Remover este link"
+              className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded text-[11px] text-tng-marine-400 opacity-0 transition group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-0"
+            >
+              <i className="fa-solid fa-xmark" aria-hidden="true" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={add}
+        className="text-[11px] font-medium text-tng-orange-300 hover:text-tng-orange-200"
+      >
+        + adicionar link
+      </button>
+    </div>
   );
 }
 

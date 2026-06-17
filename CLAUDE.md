@@ -1246,6 +1246,17 @@ Quando reativar:
 - Correção de bugs do uso real
 - Documentação de uso interna
 
+## Sprint 16 — Múltiplos links de cliente com label (v0.1.7) — 2026-06-17
+
+Pré-importação dos 103 clientes da planilha consolidada (`dados clientes/output/clientes.xlsx`), o user identificou que **6 clientes têm múltiplas unidades** (Oficina do Smart com 5 perfis Google Meu Negócio, AM Advocacia com 3 GMNs e 3 grupos WhatsApp, Fix Na Hora com 3, etc.). O schema antigo só aceitava 1 GMN e 1 WhatsApp por cliente. Esta sprint expande os 3 tipos de link pra arrays uniformes `{label,url}[]`, onde o label tipicamente carrega o nome da unidade.
+
+- ✅ **Migration `20260618000001_client_multi_links.sql` — 2026-06-17.**
+  Substitui `google_business_url text` + `whatsapp_group_url text` + `drive_urls text[]` por 3 colunas `jsonb` (`google_business_urls`, `whatsapp_group_urls`, `drive_urls`), cada uma com array de `{label, url}`. Dados existentes são preservados via `UPDATE` antes do `DROP` (label vai como string vazia). Constraints `jsonb_typeof = 'array'` impedem objetos soltos. `comment on column` documentam o formato.
+- ✅ **`LinkArrayInput` reutilizável no ClientForm — 2026-06-17.**
+  Componente novo em `ClientsAdmin.tsx` que renderiza lista dinâmica de pares (label, url) com botão "+ adicionar mais um link" e lixeira por linha. Usado nas 3 seções (GMN, WhatsApp, Drive). Form sempre garante 1 linha vazia visível pra UX previsível; vazios são limpos no `cleanLinkArray()` de `lib/clients.ts` antes de gravar. Tipo novo `ClientLink` em `types/database.ts`.
+- ✅ **Drawer renderiza todos os links com label da unidade — 2026-06-17.**
+  `ClientLinks` em `DemandDetailDrawer.tsx` itera os 3 arrays e usa o `label` como texto do chip; quando vazio, cai no fallback histórico ("Google Meu Negócio", "Grupo no WhatsApp", "Google Drive"/"Drive N"). Layout grid preservado. Drive mantém o "Drive 1/2..." quando há vários sem label.
+
 ## Sprint 15 — Hot-fix + Menções (v0.1.6) — 2026-06-17
 
 Resposta a feedback do v0.1.5: erro de FK ao excluir demanda com comentários

@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import type { Client, ClientStatus } from "../types/database";
+import type { Client, ClientLink, ClientStatus } from "../types/database";
 
 export type ClientInput = {
   name: string;
@@ -8,10 +8,11 @@ export type ClientInput = {
   phone?: string | null;
   notes?: string | null;
   status?: ClientStatus;
-  google_business_url?: string | null;
-  // Lista limpa de URLs do Drive (sem vazios). O ClientsAdmin filtra antes.
-  drive_urls?: string[];
-  whatsapp_group_url?: string | null;
+  // Listas já saneadas (sem itens vazios). O ClientsAdmin pode passar
+  // arrays com `url` em branco — `cleanLinkArray` filtra antes de gravar.
+  google_business_urls?: ClientLink[];
+  drive_urls?: ClientLink[];
+  whatsapp_group_urls?: ClientLink[];
 };
 
 export type ClientPatch = Partial<ClientInput>;
@@ -46,9 +47,9 @@ export async function createClient(
     phone: input.phone?.trim() || null,
     notes: input.notes?.trim() || null,
     status: input.status ?? "active",
-    google_business_url: input.google_business_url?.trim() || null,
-    drive_urls: cleanUrlArray(input.drive_urls),
-    whatsapp_group_url: input.whatsapp_group_url?.trim() || null,
+    google_business_urls: cleanLinkArray(input.google_business_urls),
+    drive_urls: cleanLinkArray(input.drive_urls),
+    whatsapp_group_urls: cleanLinkArray(input.whatsapp_group_urls),
     created_by: user?.id ?? null,
   };
 
@@ -79,14 +80,14 @@ export async function updateClient(
   if (patch.phone !== undefined) payload.phone = patch.phone?.trim() || null;
   if (patch.notes !== undefined) payload.notes = patch.notes?.trim() || null;
   if (patch.status !== undefined) payload.status = patch.status;
-  if (patch.google_business_url !== undefined) {
-    payload.google_business_url = patch.google_business_url?.trim() || null;
+  if (patch.google_business_urls !== undefined) {
+    payload.google_business_urls = cleanLinkArray(patch.google_business_urls);
   }
   if (patch.drive_urls !== undefined) {
-    payload.drive_urls = cleanUrlArray(patch.drive_urls);
+    payload.drive_urls = cleanLinkArray(patch.drive_urls);
   }
-  if (patch.whatsapp_group_url !== undefined) {
-    payload.whatsapp_group_url = patch.whatsapp_group_url?.trim() || null;
+  if (patch.whatsapp_group_urls !== undefined) {
+    payload.whatsapp_group_urls = cleanLinkArray(patch.whatsapp_group_urls);
   }
 
   if (Object.keys(payload).length === 0) {
@@ -106,17 +107,18 @@ export async function updateClient(
   return { data: data as Client, error: null };
 }
 
-// Normaliza arrays de URLs: trim + remove vazios + dedup. Postgres aceita
-// text[] vazio, então passar [] em vez de null mantém o tipo consistente.
-function cleanUrlArray(input: string[] | undefined): string[] {
+// Normaliza arrays de ClientLink: trim em label/url, descarta itens sem url,
+// dedup por url. Postgres aceita jsonb '[]' vazio então passar [] mantém o
+// tipo consistente.
+function cleanLinkArray(input: ClientLink[] | undefined): ClientLink[] {
   if (!input) return [];
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: ClientLink[] = [];
   for (const raw of input) {
-    const trimmed = raw.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    out.push(trimmed);
+    const url = raw.url?.trim() ?? "";
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push({ label: raw.label?.trim() ?? "", url });
   }
   return out;
 }

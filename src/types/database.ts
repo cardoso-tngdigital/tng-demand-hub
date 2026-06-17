@@ -43,6 +43,15 @@ export interface Profile {
   updated_at: string;
 }
 
+// Cada link de cliente carrega um rótulo opcional (nome da unidade, "Sede",
+// etc.). Quando vazio, a UI cai num fallback padrão ("Google Meu Negócio",
+// "Grupo no WhatsApp", "Google Drive"). Vide migration
+// 20260618000001_client_multi_links.sql.
+export interface ClientLink {
+  label: string;
+  url: string;
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -51,9 +60,9 @@ export interface Client {
   phone: string | null;
   status: ClientStatus;
   notes: string | null;
-  google_business_url: string | null;
-  drive_urls: string[];
-  whatsapp_group_url: string | null;
+  google_business_urls: ClientLink[];
+  drive_urls: ClientLink[];
+  whatsapp_group_urls: ClientLink[];
   created_by: string | null;
   created_at: string;
   updated_at: string;

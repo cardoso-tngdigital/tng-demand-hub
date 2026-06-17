@@ -411,27 +411,28 @@ function ClientLinks({
   if (!client) return null;
 
   const links: { label: string; href: string; iconClass: string }[] = [];
-  if (client.google_business_url) {
+  for (const item of client.google_business_urls) {
     links.push({
-      label: "Google Meu Negócio",
-      href: client.google_business_url,
+      label: item.label || "Google Meu Negócio",
+      href: item.url,
       iconClass: "fa-solid fa-store",
     });
   }
-  if (client.whatsapp_group_url) {
+  for (const item of client.whatsapp_group_urls) {
     links.push({
-      label: "Grupo no WhatsApp",
-      href: client.whatsapp_group_url,
+      label: item.label || "Grupo no WhatsApp",
+      href: item.url,
       iconClass: "fa-brands fa-whatsapp",
     });
   }
-  for (let i = 0; i < client.drive_urls.length; i++) {
+  client.drive_urls.forEach((item, i) => {
+    const fallback = client.drive_urls.length > 1 ? `Drive ${i + 1}` : "Google Drive";
     links.push({
-      label: client.drive_urls.length > 1 ? `Drive ${i + 1}` : "Google Drive",
-      href: client.drive_urls[i],
+      label: item.label || fallback,
+      href: item.url,
       iconClass: "fa-brands fa-google-drive",
     });
-  }
+  });
   if (links.length === 0) return null;
 
   async function open(href: string) {
