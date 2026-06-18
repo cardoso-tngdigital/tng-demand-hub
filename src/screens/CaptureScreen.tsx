@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
@@ -22,7 +23,13 @@ import {
   diffsToPatch,
   type FieldDiff,
 } from "../lib/demandEdit";
-import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
+import {
+  convertPlainTextMentions,
+  extractMentionIdsFromHtml,
+  htmlToPlainText,
+  legacyToHtml,
+} from "../lib/htmlContent";
+import { RichTextEditor } from "../components/RichTextEditor";
 import { supabase } from "../lib/supabase/client";
 import {
   buildPendingAttachment,
@@ -460,7 +467,7 @@ export function CaptureScreen() {
     await closeWindow();
   }
 
-  async function saveCommentMode(content: string) {
+  async function saveCommentMode(content: string, mentions: string[]) {
     if (!targetDemand) return;
     const trimmed = content.trim();
     if (!trimmed) {
@@ -469,7 +476,7 @@ export function CaptureScreen() {
     }
     setBusy(true);
     setError(null);
-    const { error } = await createComment(targetDemand.id, trimmed);
+    const { error } = await createComment(targetDemand.id, trimmed, mentions);
     setBusy(false);
     if (error) {
       setError(error);
@@ -609,11 +616,12 @@ export function CaptureScreen() {
         <CommentConfirmView
           target={targetDemand}
           initialContent={initial.descricao}
+          profiles={profiles}
           busy={busy}
           error={error}
           onCancel={() => void closeWindow({ cancelled: true })}
           onBack={() => setMode("target")}
-          onConfirm={(content) => void saveCommentMode(content)}
+          onConfirm={(content, mentions) => void saveCommentMode(content, mentions)}
         />
       );
     }
@@ -1713,22 +1721,29 @@ function confirmButtonLabel(diffCount: number, attachmentCount: number): string 
 function CommentConfirmView(props: {
   target: Demand;
   initialContent: string;
+  profiles: ProfileOption[];
   busy: boolean;
   error: string | null;
   onCancel: () => void;
   onBack: () => void;
-  onConfirm: (content: string) => void;
+  onConfirm: (content: string, mentions: string[]) => void;
 }) {
   // A IA devolve descrição com possível bloco de anexos junto ("---" como
   // separador). Pra comentário, queremos só a parte principal por default.
+  // Converte @menções em chips antes de injetar no editor, pra que o user
+  // veja as marcações já no carregamento.
   const initialContent = props.initialContent.split(/\n\n---\n\n/)[0].trim();
-  const [content, setContent] = useState(initialContent);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const initialHtml = useMemo(
+    () => convertPlainTextMentions(initialContent, props.profiles).html,
+    [initialContent, props.profiles],
+  );
+  const [html, setHtml] = useState(initialHtml);
 
-  useEffect(() => {
-    textareaRef.current?.focus();
-    textareaRef.current?.select();
-  }, []);
+  // Submit usado tanto pelo botão quanto pelo atalho ⌘↵.
+  const submit = useCallback(() => {
+    const mentions = extractMentionIdsFromHtml(html);
+    props.onConfirm(html, mentions);
+  }, [html, props]);
 
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent) {
@@ -1737,17 +1752,18 @@ function CommentConfirmView(props: {
         props.onCancel();
       } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        props.onConfirm(content);
+        submit();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content]);
+  }, [props, submit]);
 
   const targetLabel =
     props.target.title ||
     htmlToPlainText(legacyToHtml(props.target.description)).slice(0, 80);
+
+  const isEmpty = htmlToPlainText(html).trim().length === 0;
 
   return (
     <div className="flex h-screen items-center justify-center bg-tng-marine-700">
@@ -1789,17 +1805,21 @@ function CommentConfirmView(props: {
           </p>
         </div>
 
-        <div className="flex-1 overflow-hidden px-5 py-4">
-          <label className="mb-2 block text-[10px] uppercase tracking-wider text-tng-marine-300">
-            Comentário
+        <div className="flex-1 overflow-auto px-5 py-4">
+          <label className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-tng-marine-300">
+            <span>Comentário</span>
+            <span className="normal-case tracking-normal text-[10px] text-tng-marine-400">
+              digite @ para marcar alguém
+            </span>
           </label>
-          <textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            rows={6}
-            className="block h-[calc(100%-2rem)] w-full resize-none rounded-md border border-tng-marine-600 bg-tng-marine-800 px-3 py-2 text-sm text-tng-marine-50 focus:border-tng-orange-400 focus:outline-none focus:ring-1 focus:ring-tng-orange-400/30"
-            disabled={props.busy}
+          <RichTextEditor
+            value={html}
+            onChange={setHtml}
+            variant="compact"
+            autoFocus
+            minHeight={140}
+            placeholder="Comentário…"
+            mentionProfiles={props.profiles}
           />
         </div>
 
@@ -1821,8 +1841,8 @@ function CommentConfirmView(props: {
             envia
           </span>
           <button
-            onClick={() => props.onConfirm(content)}
-            disabled={props.busy || content.trim().length === 0}
+            onClick={submit}
+            disabled={props.busy || isEmpty}
             className="rounded-md bg-tng-orange-400 px-3 py-1.5 text-xs font-semibold text-tng-marine-900 transition hover:bg-tng-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {props.busy ? "Enviando…" : "Enviar comentário"}

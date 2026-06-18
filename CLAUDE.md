@@ -1246,6 +1246,26 @@ Quando reativar:
 - Correção de bugs do uso real
 - Documentação de uso interna
 
+## Sprint 17 — Menções @usuario na captura → comentário (v0.1.8) — 2026-06-17
+
+Sprint 15 trouxe menções `@usuario` no editor de comentários do drawer, mas o
+fluxo "comentar" da janela flutuante de captura ainda gravava o texto cru —
+`@joao` virava texto literal, sem ID no array `comments.mentions`, sem
+notificação pro mencionado. Resolvido em duas camadas.
+
+- ✅ **Helper `convertPlainTextMentions` em `lib/htmlContent.ts` — 2026-06-17.**
+  Recebe texto + lista de profiles, devolve `{html, mentionIds}`. Matching
+  fuzzy: full_name exato → primeiro+último nome → prefixo único do primeiro
+  nome. Normaliza acento e case. Casos não encontrados ficam como texto cru
+  (`@joao`) — sem chip, sem notif. Sem custo de IA.
+- ✅ **`CommentConfirmView` ganha RichTextEditor com mentionProfiles —
+  2026-06-17.** Substitui o `<textarea>` antigo. Init recebe o HTML já
+  processado pelo helper (chips visíveis no carregamento). User pode editar e
+  digitar `@` pra abrir o dropdown do tiptap. Submit usa
+  `extractMentionIdsFromHtml` pra extrair os IDs finais e passa ao
+  `saveCommentMode(content, mentions)`, que repassa pra `createComment`.
+  Atalho `⌘↵` mantido via listener global.
+
 ## Sprint 16 — Múltiplos links de cliente com label (v0.1.7) — 2026-06-17
 
 Pré-importação dos 103 clientes da planilha consolidada (`dados clientes/output/clientes.xlsx`), o user identificou que **6 clientes têm múltiplas unidades** (Oficina do Smart com 5 perfis Google Meu Negócio, AM Advocacia com 3 GMNs e 3 grupos WhatsApp, Fix Na Hora com 3, etc.). O schema antigo só aceitava 1 GMN e 1 WhatsApp por cliente. Esta sprint expande os 3 tipos de link pra arrays uniformes `{label,url}[]`, onde o label tipicamente carrega o nome da unidade.
