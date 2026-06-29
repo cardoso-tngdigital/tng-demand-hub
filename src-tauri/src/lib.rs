@@ -18,13 +18,13 @@
 // O outro modo é desativado automaticamente.
 // =============================================================================
 
-use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU8, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 
 // ---------------------------------------------------------------------------
@@ -45,22 +45,88 @@ const POLL_INTERVAL: Duration = Duration::from_millis(25);
 // Comandos do frontend
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
-fn hide_capture_window(app: tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("capture") {
-        let _ = window.hide();
+// PID do app que estava em foreground antes de a captura aparecer.
+// Guardamos imediatamente antes de show() pra poder reativar
+// manualmente esse app quando a captura for destruída. Sem isso, o
+// macOS escolhe a próxima janela do mesmo app (a main) — o tipo de
+// focus-stealing que o user descreveu como "a janela principal abre
+// sem eu pedir".
+//
+// Tentamos antes (2026-06-27/29):
+//   - `NSApp.hide(nil)` → escondia TODAS as janelas; quando reativa o
+//     app pra mostrar a captura nova, restaura a main junto.
+//   - `NSApp.deactivate()` → não basta; o macOS ainda promove a main
+//     do TNG em vez de transferir o foco pra outro app.
+//
+// A solução que funciona é dizer explicitamente *qual* app deve voltar.
+#[cfg(target_os = "macos")]
+static PREVIOUS_APP_PID: AtomicI32 = AtomicI32::new(-1);
+
+#[cfg(target_os = "macos")]
+fn remember_frontmost_app_pid() {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace.is_null() {
+            return;
+        }
+        let frontmost: *mut Object = msg_send![workspace, frontmostApplication];
+        if frontmost.is_null() {
+            return;
+        }
+        let pid: i32 = msg_send![frontmost, processIdentifier];
+        let our_pid = std::process::id() as i32;
+        if pid > 0 && pid != our_pid {
+            PREVIOUS_APP_PID.store(pid, Ordering::SeqCst);
+        }
     }
 }
 
-// Esconde a janela principal sem encerrar o app — usado quando o usuário
-// cancela a captura via Esc e a janela main já estava visível em segundo
-// plano. No macOS, esconder só a janela `capture` faz o sistema dar foco
-// automaticamente pra próxima janela do mesmo app (a main), o que abre
-// uma UI que o user não pediu. Esconder a main junto resolve.
+#[cfg(target_os = "macos")]
+fn activate_previous_app() {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    let pid = PREVIOUS_APP_PID.load(Ordering::SeqCst);
+    if pid <= 0 {
+        return;
+    }
+    unsafe {
+        let app: *mut Object = msg_send![
+            class!(NSRunningApplication),
+            runningApplicationWithProcessIdentifier: pid
+        ];
+        if app.is_null() {
+            return;
+        }
+        // NSApplicationActivateIgnoringOtherApps = 1 << 1 = 2
+        let _: bool = msg_send![app, activateWithOptions: 2u64];
+    }
+    PREVIOUS_APP_PID.store(-1, Ordering::SeqCst);
+}
+
+// Destrói a janela `capture` em vez de só esconder. Como ela é criada
+// on-demand (Sprint 18), destruir é o que limpa o `CGWindowList` do macOS
+// e impede o AltTab de listar a janela como aberta. Próxima invocação do
+// atalho global chama `ensure_capture_window` que recria.
+//
+// No macOS, ANTES de destruir, devolvemos o foco ao app que estava em
+// foreground quando a captura abriu (guardado em PREVIOUS_APP_PID). Sem
+// isso o macOS escolheria a main do TNG pra promover. No Windows não
+// há focus stealing, então só o destroy basta.
+//
+// Nome `hide_capture_window` mantido pra não quebrar os call sites do JS
+// — a semântica observável (a janela some) é a mesma.
 #[tauri::command]
-fn hide_main_window(app: tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+fn hide_capture_window(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.run_on_main_thread(|| {
+            activate_previous_app();
+        });
+    }
+    if let Some(window) = app.get_webview_window("capture") {
+        let _ = window.destroy();
     }
 }
 
@@ -300,9 +366,79 @@ fn spawn_double_tap_watcher() {
 // ---------------------------------------------------------------------------
 // Helpers de janela
 // ---------------------------------------------------------------------------
+//
+// As janelas `capture` e `preview` são criadas on-demand via Rust em vez
+// de declaradas em `tauri.conf.json`. Motivo: no macOS, janelas vivas
+// porém invisíveis ainda aparecem no `CGWindowList`, então apps de
+// terceiros como AltTab as listam como abertas mesmo escondidas. Criar
+// on-demand + `destroy()` no fechamento elimina esse vazamento. Custo:
+// ~200ms de cold start no primeiro disparo após o boot — aceitável.
+
+fn ensure_capture_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    if let Some(window) = app.get_webview_window("capture") {
+        return Some(window);
+    }
+    match WebviewWindowBuilder::new(
+        app,
+        "capture",
+        WebviewUrl::App("index.html#capture".into()),
+    )
+    .title("Captura rápida")
+    .inner_size(640.0, 420.0)
+    .center()
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .shadow(true)
+    .minimizable(false)
+    .maximizable(false)
+    .visible(false)
+    .focused(false)
+    .build()
+    {
+        Ok(window) => Some(window),
+        Err(err) => {
+            eprintln!("[ensure_capture_window] erro ao criar: {}", err);
+            None
+        }
+    }
+}
+
+fn ensure_preview_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    if let Some(window) = app.get_webview_window("preview") {
+        return Some(window);
+    }
+    match WebviewWindowBuilder::new(
+        app,
+        "preview",
+        WebviewUrl::App("index.html#preview".into()),
+    )
+    .title("Pré-visualização")
+    .inner_size(1000.0, 720.0)
+    .min_inner_size(480.0, 360.0)
+    .center()
+    .shadow(true)
+    .visible(false)
+    .focused(false)
+    .build()
+    {
+        Ok(window) => Some(window),
+        Err(err) => {
+            eprintln!("[ensure_preview_window] erro ao criar: {}", err);
+            None
+        }
+    }
+}
 
 fn show_capture_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("capture") {
+    // Guarda o app que está no foreground AGORA, antes da captura tomar
+    // o foco. `hide_capture_window` usa isso pra devolver o foco ao app
+    // correto quando o user cancelar/concluir a captura.
+    #[cfg(target_os = "macos")]
+    remember_frontmost_app_pid();
+
+    if let Some(window) = ensure_capture_window(app) {
         let _ = window.show();
         let _ = window.set_focus();
         let _ = window.center();
@@ -315,6 +451,19 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+// Commands invocáveis do frontend pra forçar a criação on-demand das
+// janelas auxiliares antes de emitir eventos pra elas (sem isso, o
+// evento se perde porque a janela ainda não existe).
+#[tauri::command]
+fn ensure_capture_window_cmd(app: tauri::AppHandle) {
+    let _ = ensure_capture_window(&app);
+}
+
+#[tauri::command]
+fn ensure_preview_window_cmd(app: tauri::AppHandle) {
+    let _ = ensure_preview_window(&app);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,12 +480,26 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             hide_capture_window,
-            hide_main_window,
             set_tray_badge,
             read_file_bytes,
             set_capture_hotkey,
             set_capture_double_tap,
+            ensure_capture_window_cmd,
+            ensure_preview_window_cmd,
         ]);
+
+    // Single-instance: garante que clicar no atalho da taskbar/Dock
+    // reativa a instância existente em vez de abrir outra. Sem isso,
+    // o usuário acaba com 2-3 ícones na bandeja do Windows quando
+    // pensa que fechou o app e clica no atalho de novo.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(
+            |app, _args, _cwd| {
+                show_main_window(app);
+            },
+        ));
+    }
 
     #[cfg(desktop)]
     {
@@ -403,6 +566,21 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Intercepta o X da janela main: esconde em vez de fechar.
+            // Combinado com o tray icon (Abrir / Sair) e com single-instance,
+            // garante que o app continua rodando em segundo plano e o
+            // usuário sempre consegue reativá-lo pelo tray ou pelo atalho
+            // da taskbar/Dock — em vez de spawnar nova instância.
+            if let Some(main_window) = app.get_webview_window("main") {
+                let main_clone = main_window.clone();
+                main_window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = main_clone.hide();
+                    }
+                });
+            }
 
             Ok(())
         })

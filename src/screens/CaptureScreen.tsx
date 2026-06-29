@@ -243,13 +243,12 @@ export function CaptureScreen() {
     });
   }, []);
 
-  // `cancelled=true` significa que o user fechou sem enviar (Esc ou botão
-  // Cancelar). Nesse caso a janela main também é escondida — caso contrário
-  // o macOS dá foco automaticamente pra próxima janela do app, "abrindo" o
-  // painel principal sem o user pedir. Quando uma demanda é enviada com
-  // sucesso, a janela main aparece naturalmente (comportamento desejado).
-  async function closeWindow(opts?: { cancelled?: boolean }) {
-    const cancelled = opts?.cancelled === true;
+  // Esc / Cancelar / envio bem-sucedido — tudo cai aqui. A captura é
+  // destruída pelo command Rust `hide_capture_window`; no macOS o
+  // mesmo command esconde o app inteiro (via NSApp.hide) pra que o
+  // foco do sistema retorne pro app anterior (Chrome, etc) em vez de
+  // pular pra main do TNG, que estava em background.
+  async function closeWindow(_opts?: { cancelled?: boolean }) {
     attachments.forEach(disposePending);
     // Best-effort: apaga arquivos órfãos no Storage tmp caso o usuário tenha
     // gerado uploads e cancelado a captura. Falha silenciosa — o cleanup
@@ -269,11 +268,6 @@ export function CaptureScreen() {
     setCandidates([]);
     setTargetDemand(null);
     try {
-      if (cancelled) {
-        // Esconde a main ANTES da capture pra evitar flash do painel
-        // principal aparecendo por um frame.
-        await invoke("hide_main_window");
-      }
       await invoke("hide_capture_window");
     } catch (err) {
       console.error("[Capture] hide failed:", err);

@@ -23,7 +23,7 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   isRegistered as gsIsRegistered,
@@ -65,16 +65,19 @@ export function PreviewScreen() {
   const current = bundle && bundle.items[currentIndex] ? bundle.items[currentIndex] : null;
 
   const hide = useCallback(async () => {
-    // Limpa o bundle ANTES de esconder pra desmontar qualquer <video>
-    // ou <audio> em reprodução — esconder a janela só some o webview,
-    // a mídia continua tocando senão.
+    // Limpa o bundle ANTES de destruir pra desmontar qualquer <video>
+    // ou <audio> em reprodução — só destruir a janela do macOS pode
+    // deixar a mídia tocando até o GC liberar o webview.
     setBundle(null);
     setCurrentIndex(0);
     setView(INITIAL_VIEW);
     try {
-      await getCurrentWindow().hide();
+      // destroy() em vez de hide(): a janela some do CGWindowList do
+      // macOS, então o AltTab não a lista mais. Próximo preview cria
+      // outra (cold start ~200ms, aceitável).
+      await getCurrentWindow().destroy();
     } catch (err) {
-      console.error("[Preview] hide failed:", err);
+      console.error("[Preview] destroy failed:", err);
     }
   }, []);
 
@@ -113,6 +116,12 @@ export function PreviewScreen() {
       // PDF, esse keydown deixa de chegar — daí o botão Fechar visível.
       window.setTimeout(() => rootRef.current?.focus(), 50);
     });
+
+    // Avisa quem chamou (em main) que o React montou e o listener acima
+    // está vivo — sem isso o evento `preview:open` emitido logo após
+    // criar a janela é entregue antes do listener registrar e se perde.
+    void emit("preview:ready");
+
     return () => {
       void unlisten.then((fn) => fn());
     };

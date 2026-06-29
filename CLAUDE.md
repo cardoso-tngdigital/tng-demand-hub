@@ -1246,6 +1246,71 @@ Quando reativar:
 - Correção de bugs do uso real
 - Documentação de uso interna
 
+## Sprint 18 — Janela de captura, single-instance e AltTab (v0.1.9) — 2026-06-27
+
+Bug crítico relatado por membros: apertar `Esc` na janela de captura
+"fechava o app inteiro". Investigação encontrou 3 problemas que se
+reforçavam — a Sprint 14 escondia a main quando o ESC fechava a
+captura (pra evitar focus-stealing do macOS), o app não tinha
+`tauri-plugin-single-instance` (clicar no atalho da taskbar do Windows
+spawnava nova instância), e no macOS as janelas `capture`/`preview`
+viviam pré-criadas com `visible: false` mas o `CGWindowList` ainda as
+enxergava — AltTab listava ambas como abertas.
+
+Decisão de UX consolidada: a captura é um atalho global de fora do app;
+quando fecha, o foco do sistema deve voltar pro app anterior (Chrome
+etc), NUNCA promover a main do TNG sem ser pedido. A preview é aberta
+de dentro do app, então fechar volta naturalmente pra main.
+
+- ✅ 🐛 `hide_main_window` removido — 2026-06-27. A função inteira
+  (cmd + invoke handler + chamada no CaptureScreen) foi retirada. Era
+  workaround da Sprint 14 e gerava o sintoma de "fechou o app" no
+  Windows. Substituído pela abordagem nova abaixo.
+- ✅ 🐛 Foco volta ao app anterior por PID — 2026-06-29. `show_capture_window`
+  agora chama `remember_frontmost_app_pid` ANTES do show, guardando o
+  PID do app que estava em foreground (Chrome etc) num `AtomicI32`
+  estático. Quando a captura é destruída, `hide_capture_window` chama
+  `activate_previous_app` que faz `NSRunningApplication.activateWithOptions`
+  pro PID guardado — devolve o foco explicitamente, sem deixar o macOS
+  escolher (que escolheria a main do TNG). Tentativas anteriores não
+  bastaram: `NSApp.hide(nil)` (2026-06-27) escondia tudo e restaurava
+  no próximo Alt+Alt; `NSApp.deactivate()` (2026-06-29) liberava o
+  foreground mas o macOS ainda promovia a main do TNG em vez de
+  passar pra outro app.
+- ✅ 🐛 Plugin `tauri-plugin-single-instance` integrado — 2026-06-27.
+  Adicionado em `Cargo.toml` (target desktop) + registrado no builder
+  do `lib.rs` com handler que chama `show_main_window`. Clicar no
+  atalho da taskbar/Dock agora reativa a instância existente em vez
+  de spawnar outra — fim dos múltiplos ícones na bandeja do Windows.
+- ✅ 🐛 `CloseRequested` da main interceptado — 2026-06-27. No setup
+  do `lib.rs`, depois do tray icon, `on_window_event` da janela main
+  prevent_close + hide. Combinado com tray (Abrir/Nova captura/Sair)
+  + single-instance, fechar pelo X esconde em vez de encerrar; user
+  reabre pelo tray ou pelo atalho. Cmd+Q (macOS) ou item Sair do tray
+  encerram de verdade.
+- ✅ 🐛 `capture`/`preview` criadas on-demand — 2026-06-27. Removidos
+  os blocos do `tauri.conf.json`. No `lib.rs`, `ensure_capture_window`
+  e `ensure_preview_window` usam `WebviewWindowBuilder` pra construir
+  on-demand; ao fechar, `destroy()` em vez de `hide()`. A janela some
+  do `CGWindowList` do macOS, sem aparecer no AltTab. Cold start de
+  ~200ms na 1ª invocação após boot — aceitável.
+- ✅ 🐛 Handshake `preview:ready` — 2026-06-27. Como a janela `preview`
+  é criada toda vez que precisa, o React lá dentro leva tempo pra
+  montar e registrar o listener de `preview:open`. `lib/preview.ts`
+  agora aguarda `preview:ready` (emitido pela `PreviewScreen.tsx` no
+  mount) antes de mandar o payload — com timeout de 4s como fallback.
+- ✅ 🐛 Permission `core:window:allow-destroy` — 2026-06-27. Adicionada
+  ao `capabilities/default.json` pra liberar o `destroy()` chamado
+  pelo frontend (PreviewScreen).
+- ✅ ✨ Commands `ensure_capture_window_cmd`/`ensure_preview_window_cmd`
+  expostos ao JS — 2026-06-27. `lib/preview.ts` invoca o `_cmd` antes
+  de emitir; outros consumidores (futuro) podem chamar pra preparar
+  uma janela auxiliar sem mostrá-la.
+- ✅ ✨ Deps `cocoa = "0.26"` + `objc = "0.2"` (macOS-only) — 2026-06-27.
+  Necessárias pro `NSApp.hide(nil)` chamado por `hide_capture_window`.
+  Restritas ao target macOS via `cfg(target_os = "macos")`.
+- ✅ ✨ Bump 0.1.8 → 0.1.9 + Sprint 18 documentada — 2026-06-27.
+
 ## Sprint 17 — Menções @usuario na captura → comentário (v0.1.8) — 2026-06-17
 
 Sprint 15 trouxe menções `@usuario` no editor de comentários do drawer, mas o
