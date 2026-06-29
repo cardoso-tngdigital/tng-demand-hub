@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createClient,
   deleteClient,
@@ -7,6 +7,14 @@ import {
   type ClientInput,
 } from "../lib/clients";
 import type { Client, ClientLink } from "../types/database";
+
+// Normaliza acento + case-fold pra que "espaço" case com "Espaco" etc.
+function normalizeSearch(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
 
 // Garante pelo menos uma linha vazia visível pra UX previsível dos forms.
 const emptyLink = (): ClientLink => ({ label: "", url: "" });
@@ -19,6 +27,18 @@ export function ClientsAdmin({ open, onClose }: { open: boolean; onClose: () => 
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  const filteredClients = useMemo(() => {
+    const q = normalizeSearch(search.trim());
+    if (!q) return clients;
+    return clients.filter((c) => {
+      const haystack = normalizeSearch(
+        [c.name, c.alias ?? "", c.email ?? ""].join(" "),
+      );
+      return haystack.includes(q);
+    });
+  }, [clients, search]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -137,13 +157,48 @@ export function ClientsAdmin({ open, onClose }: { open: boolean; onClose: () => 
           </div>
         )}
 
+        {!loading && clients.length > 0 && (
+          <div className="mb-3 flex items-center gap-2">
+            <div className="relative flex-1">
+              <i
+                className="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-tng-marine-400"
+                aria-hidden="true"
+              />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por nome, apelido ou email…"
+                className="w-full rounded-md border border-tng-marine-700 bg-tng-marine-800/40 py-2 pl-9 pr-3 text-sm text-tng-marine-50 placeholder:text-tng-marine-400 focus:border-tng-orange-400 focus:outline-none"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  aria-label="Limpar busca"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-tng-marine-400 hover:bg-tng-marine-700 hover:text-tng-marine-100"
+                >
+                  <i className="fa-solid fa-xmark text-xs" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            <span className="text-[11px] text-tng-marine-400 tabular-nums">
+              {search ? `${filteredClients.length} de ${clients.length}` : `${clients.length}`}
+            </span>
+          </div>
+        )}
+
         {loading ? (
           <p className="text-sm text-tng-marine-300">Carregando…</p>
         ) : clients.length === 0 ? (
           <p className="text-sm text-tng-marine-300">Nenhum cliente cadastrado ainda.</p>
+        ) : filteredClients.length === 0 ? (
+          <p className="text-sm text-tng-marine-300">
+            Nenhum cliente bate com "<span className="text-tng-marine-100">{search}</span>".
+          </p>
         ) : (
           <ul className="space-y-2">
-            {clients.map((c) =>
+            {filteredClients.map((c) =>
               editingId === c.id ? (
                 <li key={c.id} className="rounded-lg border border-tng-orange-400/40 bg-tng-marine-800/40 p-3">
                   <ClientForm

@@ -2,6 +2,20 @@
 
 Este arquivo é o **contexto persistente** que o Claude Code consulta a cada interação. Atualize-o sempre que tomar decisões arquiteturais, mudar convenções ou adicionar dependências relevantes.
 
+## Convenção dos registros de sprint
+
+Cada mudança implementada vai como bullet no final da sprint em andamento, no formato:
+
+```
+- ✅ ✨ Título — YYYY-MM-DD. Descrição.
+- ✅ 🐛 Título — YYYY-MM-DD. Descrição.
+```
+
+- **✨ = feature** — novo comportamento, nova tela, novo campo, refatoração.
+- **🐛 = bug** — correção de regressão, comportamento incorreto, hotfix.
+
+Use `Cmd+F` (`Ctrl+F`) com 🐛 ou ✨ pra navegar.
+
 ---
 
 ## Visão geral
@@ -918,13 +932,13 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 ### Refinamentos da IA na captura
 
-- ✅ **Refinar prompt da IA (#82) — 2026-06-08.** Título da demanda
+- ✅ ✨ **Refinar prompt da IA (#82) — 2026-06-08.** Título da demanda
   agora inclui o cliente quando identificado ("Banner da Cliente A"
   em vez de só "Banner"). Adicionados mais few-shots no prompt
   cobrindo casos curtos comuns ("feito 3 do Cliente A", "Cliente B
   aprovou") pra reduzir falsos "criar". Edge Function `extract-demand`.
 
-- ✅ **Anexos no modo editar via IA (#79) — 2026-06-10.** Antes,
+- ✅ ✨ **Anexos no modo editar via IA (#79) — 2026-06-10.** Antes,
   anexos enviados pra IA no modo `editar` eram interpretados pra
   contexto mas **descartados** ao confirmar. Agora `saveEditMode`
   em `CaptureScreen.tsx` chama `uploadAll(targetDemand.id, user.id)`
@@ -936,7 +950,7 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
   diff marcado se houver anexo (caso "só quero anexar uma imagem
   na demanda X").
 
-- ✅ **Prompt distingue anexar de comentar — 2026-06-10.** Edge
+- ✅ ✨ **Prompt distingue anexar de comentar — 2026-06-10.** Edge
   Function `extract-demand` ganhou exemplo `[D]` em "editar"
   cobrindo "anexa esse print na demanda do banner do Cliente A" +
   imagem → `intencao: "editar"`. Regra forte no topo das dicas:
@@ -948,45 +962,45 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 ### Quick Look preview (#80) — 2026-06-11
 
-- ✅ **Janela Tauri separada para anexos com zoom.** Substituído o
+- ✅ ✨ **Janela Tauri separada para anexos com zoom.** Substituído o
   overlay full-screen do drawer (`AttachmentViewer`) por uma janela
   Tauri dedicada (`label: "preview"`), pré-declarada em
   `tauri.conf.json` (visible: false, viva escondida — mesmo padrão
   da `capture`). Carrega 1000×720, redimensionável, decorations
   nativas, fica fora do alwaysOnTop.
-- ✅ **Comunicação main → preview via evento Tauri.** Helper
+- ✅ ✨ **Comunicação main → preview via evento Tauri.** Helper
   `src/lib/preview.ts` resolve a signed URL do Storage, emite
   `preview:open` com payload (`url`, `name`, `mime`, `sizeBytes`)
   pra janela e dá show + focus. `PreviewScreen.tsx` escuta o
   evento e atualiza o título da janela com o nome do arquivo.
-- ✅ **Zoom rico em imagens.** Scroll wheel com pivô no cursor
+- ✅ ✨ **Zoom rico em imagens.** Scroll wheel com pivô no cursor
   (mantém o pixel sob o cursor parado), drag pra pan quando
   ampliado, double-click toggle 1×↔2×, atalhos `+` / `−` / `0`,
   range 10%–1000%. Vídeo, áudio e PDF continuam com controles
   nativos do webview (zoom de PDF é nativo do iframe).
-- ✅ **Janela é hideable, não closeable.** `onCloseRequested`
+- ✅ ✨ **Janela é hideable, não closeable.** `onCloseRequested`
   intercepta o X nativo e chama `hide()` em vez de fechar — assim
   a janela sobrevive entre invocações e a próxima abertura é
   instantânea. Esc também esconde.
-- ✅ **Permissões adicionadas.** `core:event:allow-emit`,
+- ✅ ✨ **Permissões adicionadas.** `core:event:allow-emit`,
   `core:event:allow-emit-to`, `core:window:allow-set-title` no
   `capabilities/default.json`. Janela `preview` incluída em
   `windows: ["main", "capture", "preview"]`.
 
 #### Ajustes pós-feedback (2026-06-11):
 
-- ✅ **Áudio toca inline, não abre janela.** Áudio não tem
+- ✅ ✨ **Áudio toca inline, não abre janela.** Áudio não tem
   benefício de zoom ou janela separada — só atrapalha. Agora
   `AttachmentItem` no drawer detecta `category === "audio"` e,
   ao clicar, expande um `<audio controls>` dentro do próprio
   item (signed URL carregado on-demand). O botão alterna entre
   "Tocar" e "Recolher". Imagem/vídeo/PDF continuam abrindo na
   janela preview.
-- ✅ **Botão Fechar visível na PreviewScreen.** Adicionado `✕`
+- ✅ ✨ **Botão Fechar visível na PreviewScreen.** Adicionado `✕`
   no header (sempre presente), e o container raiz ganha
   `tabIndex={-1}` + foco automático ao receber payload — assim
   Esc funciona no abrir.
-- ✅ **Esc funciona também dentro do iframe de PDF.** Quando o
+- ✅ ✨ **Esc funciona também dentro do iframe de PDF.** Quando o
   payload é PDF, registramos `Escape` como **global shortcut**
   escopo-por-foco: o useEffect ouve `onFocusChanged` da janela
   e só mantém o atalho registrado enquanto a preview está em
@@ -994,18 +1008,18 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
   Atalho é desregistrado ao trocar de PDF pra outro tipo, ao
   esconder a janela e no unmount. Permissions adicionadas:
   `global-shortcut:allow-register/unregister/is-registered`.
-- ✅ **Mídia para ao esconder a janela.** Antes, `hide()` só
+- ✅ 🐛 **Mídia para ao esconder a janela.** Antes, `hide()` só
   invisibilizava o webview — `<video>` e `<audio>` continuavam
   tocando. Agora `hide()` limpa o `payload` (desmonta a mídia)
   antes do `getCurrentWindow().hide()`. Reseta zoom/pan também.
-- ✅ **Imports estáticos pra Tauri APIs.** `lib/preview.ts` e
+- ✅ 🐛 **Imports estáticos pra Tauri APIs.** `lib/preview.ts` e
   `PreviewScreen.tsx` usavam `import("@tauri-apps/api/webviewWindow")`
   e `import("@tauri-apps/plugin-global-shortcut")` dinâmicos.
   O Vite não pre-bundla deps descobertas só em runtime, então a
   primeira tentativa devolvia 504 "Outdated Optimize Dep" e o
   preview falhava com "Importing a module script failed". Trocados
   por imports estáticos no topo dos arquivos.
-- ✅ **`optimizeDeps.include` no `vite.config.ts`.** Mesmo com
+- ✅ 🐛 **`optimizeDeps.include` no `vite.config.ts`.** Mesmo com
   imports estáticos, o cache stale do Vite (`node_modules/.vite`)
   pode segurar o 504 entre runs. Adicionado include explícito de
   `@tauri-apps/api/event`, `@tauri-apps/api/webviewWindow`,
@@ -1015,12 +1029,12 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 ### Viewer de documentos office (#81) — 2026-06-11
 
-- ✅ **DOCX/XLSX/TXT/CSV abrem dentro da PreviewScreen.** Antes,
+- ✅ ✨ **DOCX/XLSX/TXT/CSV abrem dentro da PreviewScreen.** Antes,
   esses tipos caíam no fallback "Pré-visualização não suportada —
   use Baixar". Agora cada um tem um viewer dedicado dentro da
   janela preview. Tipos não-office (e.g. RTF, ODT) continuam com
   o fallback.
-- ✅ **`src/lib/officeRender.ts`.** Funções `renderDocxAsHtml`,
+- ✅ ✨ **`src/lib/officeRender.ts`.** Funções `renderDocxAsHtml`,
   `renderXlsxAsSheets`, `renderTextFile` que aceitam signed URL,
   fazem fetch como `Uint8Array` e usam as mesmas libs do pipeline
   de extração pra IA — `mammoth.convertToHtml` (que devolve HTML
@@ -1028,7 +1042,7 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
   `read-excel-file/web-worker` (linhas por aba). Lazy import,
   zero impacto no bundle inicial. Também tem `parseCsv` próprio
   pra CSV com aspas duplas.
-- ✅ **Componentes na PreviewScreen.** `DocxView` renderiza o
+- ✅ ✨ **Componentes na PreviewScreen.** `DocxView` renderiza o
   HTML sanitizado (DOMPurify) num container `bg-white max-w-3xl`
   estilo página de Word. `XlsxView` tem **tabs de abas** quando
   há mais de uma planilha + `<table>` com header sticky e
@@ -1038,13 +1052,13 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 #### Hardening pós-feedback (2026-06-11):
 
-- ✅ **XLSX: normalização do retorno de `read-excel-file`.** A lib
+- ✅ 🐛 **XLSX: normalização do retorno de `read-excel-file`.** A lib
   às vezes devolve `{ rows, errors }` em vez de `Row[]` puro
   (depende da versão e do formato do arquivo). `renderXlsxAsSheets`
   agora normaliza pra `Cell[][]` e garante que cada linha é uma
   array — sem isso, `header.map(...)` no `SheetTable` lançava
   TypeError com planilhas em formato inesperado.
-- ✅ **XLSX: API v9 do `read-excel-file` — 2026-06-11.** A
+- ✅ 🐛 **XLSX: API v9 do `read-excel-file` — 2026-06-11.** A
   primeira tentativa usava `readXlsxFile(blob, { getSheets: true })`
   + leitura aba a aba por `s.name`, padrão das versões antigas.
   Mas a v9.0.10 (instalada) reescreveu a API: o default export
@@ -1057,13 +1071,13 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
   same key, NaN` porque `s.name + i` com `undefined` é `NaN`.
   Reescrito pra uma única chamada `readXlsxFile(blob)` que já
   devolve todas as abas no formato certo.
-- ✅ **#81 fechado — 2026-06-11.** XLSX, DOCX, CSV e TXT abrindo
+- ✅ ✨ **#81 fechado — 2026-06-11.** XLSX, DOCX, CSV e TXT abrindo
   certinho na PreviewScreen, com tabs de abas e formatação. Pronto
   pra distribuição beta.
-- ✅ **`SheetTable` com guards.** Se `header` não for array mesmo
+- ✅ 🐛 **`SheetTable` com guards.** Se `header` não for array mesmo
   após normalização, mostra "Planilha em formato não suportado"
   em vez de crashar.
-- ✅ **`ViewerErrorBoundary` em volta dos viewers.** Class
+- ✅ 🐛 **`ViewerErrorBoundary` em volta dos viewers.** Class
   component minimalista (`getDerivedStateFromError` +
   `componentDidCatch`) que captura throws de qualquer viewer e
   exibe o `ErrorPane`. Reset via `key={payload.url}` — toda troca
@@ -1073,14 +1087,14 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 ### Bug pré-existente corrigido
 
-- ✅ **Tiptap: extensão `link` duplicada — 2026-06-11.** StarterKit
+- ✅ 🐛 **Tiptap: extensão `link` duplicada — 2026-06-11.** StarterKit
   v3 já inclui `Link` por padrão e a gente registrava `Link` de
   novo no `RichTextEditor` pra setar `autolink`, `linkOnPaste` e
   classes custom. Resultado: warning `[tiptap warn]: Duplicate
   extension names found: ['link']` em todo render. Desligado o
   Link do StarterKit (`link: false`) — nossa config custom segue
   sendo a única em uso.
-- ✅ **Global shortcut Esc abria a captura — 2026-06-11.** O
+- ✅ 🐛 **Global shortcut Esc abria a captura — 2026-06-11.** O
   `tauri_plugin_global_shortcut::Builder::with_handler(...)` no
   Rust era um handler global que disparava `show_capture_window`
   pra QUALQUER shortcut Pressed, ignorando qual era. Funcionou até
@@ -1093,14 +1107,14 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 ### Bugs corrigidos
 
-- ✅ **Drag-drop reabilitado (#83) — 2026-06-10.** Funcionou após
+- ✅ 🐛 **Drag-drop reabilitado (#83) — 2026-06-10.** Funcionou após
   a migração do Font Awesome do Kit pro pacote npm (Sprint 11):
   o Kit injetava `<svg>` no lugar de `<i>` em runtime e
   cascateava num `NotFoundError` do React 19 que quebrava o
   listener `tauri://drag-drop`. Sem o Kit, o handler sobrevive
   e o drop funciona normal.
 
-- ✅ **Font Awesome — Kit→npm — 2026-06-08.** Migrado de
+- ✅ 🐛 **Font Awesome — Kit→npm — 2026-06-08.** Migrado de
   `https://kit.fontawesome.com/...js` pra
   `@fortawesome/fontawesome-free` (CSS + webfont, zero
   manipulação de DOM). O Kit em modo SVG conflitava com o
@@ -1111,7 +1125,7 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 ### Identidade visual
 
-- ✅ **Ícone do app atualizado pra logo-icone.png — 2026-06-11.**
+- ✅ ✨ **Ícone do app atualizado pra logo-icone.png — 2026-06-11.**
   Rodado `npx tauri icon ../logo-icone.png` na raiz do
   `tng-demand-hub`. Regenerou todos os tamanhos automaticamente:
   `src-tauri/icons/{32x32,128x128,128x128@2x}.png`, `icon.png`,
@@ -1132,7 +1146,7 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
     `cargo:rerun-if-changed`. Sem isso, o binário em
     `target/debug/` segue com ícone antigo. Depois do rebuild, o
     macOS ainda cacha ícone no Dock: `killall Dock` força refresh.
-- ✅ **Tray icon colorido — 2026-06-11.** `icon_as_template(true)`
+- ✅ ✨ **Tray icon colorido — 2026-06-11.** `icon_as_template(true)`
   em `src-tauri/src/lib.rs:366` mandava o macOS converter o
   tray pra silhueta monocromática (só canal alfa). Como o
   `logo-icone.png` tem fundo preenchido (sem transparência), saía
@@ -1148,7 +1162,7 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 ### Limpeza pré-distribuição
 
-- ✅ **Testes removidos do projeto — 2026-06-11.** Apagados todos
+- ✅ ✨ **Testes removidos do projeto — 2026-06-11.** Apagados todos
   os `*.test.ts(x)` (15 arquivos em `src/lib/` e `src/components/`),
   a pasta `src/test/` (setup + factories), `vitest.config.ts` e os
   scripts `test`/`test:run` do `package.json`. DevDeps `vitest`,
@@ -1161,7 +1175,7 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
 
 ### Hotfix do auto-updater (v0.1.3) — 2026-06-11
 
-- ✅ **Em-dash no productName quebrava o `latest.json`.** Na release
+- ✅ 🐛 **Em-dash no productName quebrava o `latest.json`.** Na release
   v0.1.2 o `tauri-action` logou `Signature not found for the updater
   JSON. Skipping upload...` em ambos os jobs (macOS e Windows), e o
   `latest.json` não foi anexado. Resultado: o endpoint do updater
@@ -1170,16 +1184,16 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
   (em-dash, U+2014) no `productName: "TNG Sites — Demandas"` parece
   confundir a lógica de matching de arquivo .sig no tauri-action.
   Na v0.1.1 (nome era "TNG Demand Hub", sem em-dash) funcionava.
-- ✅ **Fix: em-dash trocado por hífen ASCII em 6 lugares.**
+- ✅ 🐛 **Fix: em-dash trocado por hífen ASCII em 6 lugares.**
   `tauri.conf.json` (`productName` + `windows[0].title`),
   `index.html` (`<title>`), `src-tauri/src/lib.rs` (header comment,
   menu item "Abrir TNG Sites - Demandas", tray tooltip).
-- ✅ **Bump 0.1.2 → 0.1.3 e novo release.** v0.1.2 fica como
+- ✅ ✨ **Bump 0.1.2 → 0.1.3 e novo release.** v0.1.2 fica como
   histórico mas não pode ser usada como base de auto-update.
 
 ### Hotfix do build de produção (v0.1.4) — 2026-06-12
 
-- ✅ **`fetch failed` no login após instalar release.** O `release.yml`
+- ✅ 🐛 **`fetch failed` no login após instalar release.** O `release.yml`
   não passava `VITE_SUPABASE_URL` nem `VITE_SUPABASE_ANON_KEY` como
   env vars pro step do `tauri-action`. O `vite build` no GitHub
   Actions rodava sem essas vars, então `import.meta.env.VITE_SUPABASE_URL`
@@ -1188,7 +1202,7 @@ distribuir pro time. Foco em qualidade da IA e UX da captura.
   bug só apareceu agora porque até v0.1.3 ninguém tinha testado o
   binário distribuído (sempre testava via `tauri dev`, que lê
   `.env.local`).
-- ✅ **Fix: secrets `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`
+- ✅ 🐛 **Fix: secrets `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`
   adicionadas ao GitHub** e passadas pro env do step. Anon key é
   pública por design do Supabase, ir no binário é o esperado;
   proteção real é RLS + signup público desabilitado.
@@ -1211,26 +1225,26 @@ sensível e superfície de ataque. Resultado: nenhum secret real
 exposto, histórico do git limpo, edge functions usando `Deno.env.get()`,
 permissões Tauri mínimas. Pequenas limpezas aplicadas:
 
-- ✅ **Project ref do Supabase removido do CLAUDE.md.** Estava em 4
+- ✅ ✨ **Project ref do Supabase removido do CLAUDE.md.** Estava em 4
   lugares: bloco de comandos úteis, seção "Configuração do Supabase
   remoto", link do painel. Substituído por placeholder `$SUPABASE_PROJECT_REF`
   + nota de que o valor real está no `.env.local`. (Tecnicamente o ref
   vai no binário via `VITE_SUPABASE_URL`, mas defense in depth — não
   precisa estar em texto puro no repo público.)
-- ✅ **Nomes de clientes reais anonimizados** na Edge Function
+- ✅ ✨ **Nomes de clientes reais anonimizados** na Edge Function
   `extract-demand/index.ts` (27 ocorrências) e no CLAUDE.md. "Bruning
   Homes" → "Cliente Beta", "Acme" → "Cliente Alfa". Não afeta a
   classificação da IA (são só few-shots), mas evita expor relação
   comercial real.
-- ✅ **Menções a username pessoal ("cardoso.webdesign") sanitizadas**
+- ✅ ✨ **Menções a username pessoal ("cardoso.webdesign") sanitizadas**
   no CLAUDE.md — substituído por "admin inicial" / "owner".
-- ✅ **CSP ativado no `tauri.conf.json`.** Antes era `csp: null`
+- ✅ ✨ **CSP ativado no `tauri.conf.json`.** Antes era `csp: null`
   (permite qualquer fetch/script). Agora whitelist específica:
   `default-src 'self'`, `connect-src` só pro Supabase + GitHub
   releases, `script-src` com `'unsafe-inline'` (Vite precisa),
   `style-src` + `font-src` pro Google Fonts. Protege contra XSS se
   algum input não sanitizado chegar no DOM.
-- ✅ **README.md reescrito.** Saiu o template padrão do Tauri
+- ✅ ✨ **README.md reescrito.** Saiu o template padrão do Tauri
   ("Tauri + React + Typescript"), entrou documentação real:
   descrição do app, instruções de install pros membros (Win + Mac
   arm/intel), setup de dev, pipeline de release.
@@ -1245,6 +1259,40 @@ Quando reativar:
 - Coleta de feedback estruturada
 - Correção de bugs do uso real
 - Documentação de uso interna
+
+## Sprint 19 — Reorg + busca de clientes + histórico para membros (v0.1.10) — 2026-06-29
+
+Sprint de polimento e organização. Padroniza a marcação dos registros
+do CLAUDE.md (🐛/✨ inline), introduz busca rápida no painel de
+clientes (~100 cadastrados após Sprint 16) e libera o histórico da
+demanda pra todos os membros — antes era admin-only.
+
+- ✅ ✨ Convenção 🐛/✨ inline nos registros de sprint — 2026-06-29.
+  Cada bullet `- ✅ Título` ganha prefixo: ✨ pra feature, 🐛 pra bug.
+  Aplicado retroativamente nas 17 sprints anteriores via script
+  (heurística + revisão manual). Nova seção "Convenção dos registros
+  de sprint" no topo do `CLAUDE.md` documenta o padrão. Compatível
+  com `feedback_registrar_no_claude_md.md` — a convenção `- ✅ Título
+  — YYYY-MM-DD.` continua valendo, só ganha o tipo na frente.
+- ✅ ✨ Busca de clientes em ClientsAdmin — 2026-06-29. Input com
+  ícone lupa acima da lista, filtro case-insensitive em
+  `name + alias + email` via `useMemo` (normaliza acento via NFD).
+  Contador `X de Y` no canto, botão `×` pra limpar, mensagem
+  específica quando nenhum bate. Resolve a fricção de localizar
+  cliente entre ~100 cadastrados.
+- ✅ ✨ Histórico de demanda visível pra todos os membros — 2026-06-29.
+  No `DemandDetailDrawer`, removido o gate `{isAdmin && ...}` e o
+  rótulo "(admin)" do título da seção. Comentários e anexos já eram
+  visíveis pra todos; manter o histórico restrito não fazia sentido.
+- ✅ ✨ Migration `20260629000001_demand_history_members_select.sql`
+  — 2026-06-29. Substitui a policy `demand_history_select_admin`
+  (Sprint 11) por `demand_history_select_members` que usa
+  `is_active_member()` em vez de `is_admin()`. INSERTs continuam
+  exclusivamente via triggers SECURITY DEFINER — nenhum membro
+  consegue forjar entradas. Não há texto livre em
+  `demand_history`, só snapshots de campos (status, responsável,
+  prazo, etc), então a exposição é segura.
+- ✅ ✨ Bump 0.1.9 → 0.1.10 — 2026-06-29.
 
 ## Sprint 18 — Janela de captura, single-instance e AltTab (v0.1.9) — 2026-06-27
 
@@ -1318,12 +1366,12 @@ fluxo "comentar" da janela flutuante de captura ainda gravava o texto cru —
 `@joao` virava texto literal, sem ID no array `comments.mentions`, sem
 notificação pro mencionado. Resolvido em duas camadas.
 
-- ✅ **Helper `convertPlainTextMentions` em `lib/htmlContent.ts` — 2026-06-17.**
+- ✅ ✨ **Helper `convertPlainTextMentions` em `lib/htmlContent.ts` — 2026-06-17.**
   Recebe texto + lista de profiles, devolve `{html, mentionIds}`. Matching
   fuzzy: full_name exato → primeiro+último nome → prefixo único do primeiro
   nome. Normaliza acento e case. Casos não encontrados ficam como texto cru
   (`@joao`) — sem chip, sem notif. Sem custo de IA.
-- ✅ **`CommentConfirmView` ganha RichTextEditor com mentionProfiles —
+- ✅ ✨ **`CommentConfirmView` ganha RichTextEditor com mentionProfiles —
   2026-06-17.** Substitui o `<textarea>` antigo. Init recebe o HTML já
   processado pelo helper (chips visíveis no carregamento). User pode editar e
   digitar `@` pra abrir o dropdown do tiptap. Submit usa
@@ -1335,11 +1383,11 @@ notificação pro mencionado. Resolvido em duas camadas.
 
 Pré-importação dos 103 clientes da planilha consolidada (`dados clientes/output/clientes.xlsx`), o user identificou que **6 clientes têm múltiplas unidades** (Oficina do Smart com 5 perfis Google Meu Negócio, AM Advocacia com 3 GMNs e 3 grupos WhatsApp, Fix Na Hora com 3, etc.). O schema antigo só aceitava 1 GMN e 1 WhatsApp por cliente. Esta sprint expande os 3 tipos de link pra arrays uniformes `{label,url}[]`, onde o label tipicamente carrega o nome da unidade.
 
-- ✅ **Migration `20260618000001_client_multi_links.sql` — 2026-06-17.**
+- ✅ ✨ **Migration `20260618000001_client_multi_links.sql` — 2026-06-17.**
   Substitui `google_business_url text` + `whatsapp_group_url text` + `drive_urls text[]` por 3 colunas `jsonb` (`google_business_urls`, `whatsapp_group_urls`, `drive_urls`), cada uma com array de `{label, url}`. Dados existentes são preservados via `UPDATE` antes do `DROP` (label vai como string vazia). Constraints `jsonb_typeof = 'array'` impedem objetos soltos. `comment on column` documentam o formato.
-- ✅ **`LinkArrayInput` reutilizável no ClientForm — 2026-06-17.**
+- ✅ ✨ **`LinkArrayInput` reutilizável no ClientForm — 2026-06-17.**
   Componente novo em `ClientsAdmin.tsx` que renderiza lista dinâmica de pares (label, url) com botão "+ adicionar mais um link" e lixeira por linha. Usado nas 3 seções (GMN, WhatsApp, Drive). Form sempre garante 1 linha vazia visível pra UX previsível; vazios são limpos no `cleanLinkArray()` de `lib/clients.ts` antes de gravar. Tipo novo `ClientLink` em `types/database.ts`.
-- ✅ **Drawer renderiza todos os links com label da unidade — 2026-06-17.**
+- ✅ ✨ **Drawer renderiza todos os links com label da unidade — 2026-06-17.**
   `ClientLinks` em `DemandDetailDrawer.tsx` itera os 3 arrays e usa o `label` como texto do chip; quando vazio, cai no fallback histórico ("Google Meu Negócio", "Grupo no WhatsApp", "Google Drive"/"Drive N"). Layout grid preservado. Drive mantém o "Drive 1/2..." quando há vários sem label.
 
 ## Sprint 15 — Hot-fix + Menções (v0.1.6) — 2026-06-17
@@ -1347,14 +1395,14 @@ Pré-importação dos 103 clientes da planilha consolidada (`dados clientes/outp
 Resposta a feedback do v0.1.5: erro de FK ao excluir demanda com comentários
 e pedido de menção `@usuario` nos comentários (estilo Trello/Notion).
 
-- ✅ **Fix: FK violation no DELETE de demanda — 2026-06-17.**
+- ✅ 🐛 **Fix: FK violation no DELETE de demanda — 2026-06-17.**
   Migration `20260617000001_fix_demand_history_cascade.sql` adiciona guard no
   trigger `demand_history_track_comments`: quando o CASCADE em comments
   dispara durante a exclusão da demand, o trigger pulava a inserção em
   `demand_history` se a demand não existir mais (caso de cascade). Sem o
   guard, a FK `demand_history.demand_id → demands.id` violava dentro da
   mesma transação.
-- ✅ **Menções @usuario em comentários — 2026-06-17.**
+- ✅ ✨ **Menções @usuario em comentários — 2026-06-17.**
   Tiptap `@tiptap/extension-mention` com dropdown próprio (sem Tippy), ↑↓
   pra navegar, Enter/Tab pra escolher, Esc fecha. Lista filtrável conforme
   digita. Profiles vêm da prop `mentionProfiles` no `RichTextEditor`.
@@ -1362,7 +1410,7 @@ e pedido de menção `@usuario` nos comentários (estilo Trello/Notion).
   attrs em geral). Helper `extractMentionIdsFromHtml(html)` popula o array
   `comments.mentions` (coluna já existia, era só wire). Render com chip
   laranja discreto em `.tng-mention` (CSS em `index.css`).
-- ✅ **Notificação de menção dedicada — 2026-06-17.**
+- ✅ ✨ **Notificação de menção dedicada — 2026-06-17.**
   `decideMentionNotification` em `notificationDecider.ts`. Tem prioridade
   sobre `decideCommentNotification` — usuário mencionado é sempre avisado
   mesmo que não esteja envolvido na demanda. Respeita novo pref
@@ -1375,58 +1423,58 @@ e pedido de menção `@usuario` nos comentários (estilo Trello/Notion).
 num único bump pra propagar via auto-update de uma vez só (sem release
 até finalizar todas).
 
-- ✅ **Ícone do Dock macOS com mais padding — 2026-06-16.**
+- ✅ ✨ **Ícone do Dock macOS com mais padding — 2026-06-16.**
   `public/logo-icone.png` substituído por `logotipo.png` (20% margem em
   volta), `npx tauri icon` regerou todos os tamanhos.
-- ✅ **Atalho Option+Option / Alt+Alt como padrão — 2026-06-16.**
+- ✅ ✨ **Atalho Option+Option / Alt+Alt como padrão — 2026-06-16.**
   `DEFAULT_MODE` em `src/lib/hotkey.ts` virou `double-tap`. Migration
   leve via `migrateHotkeyConfigIfNeeded()` (versão 2) força reset pra
   clientes que ainda estavam no combo. Infra Rust já estava 100% pronta.
-- ✅ **Badge de Prazo no card — 2026-06-16.** Novo helper
+- ✅ ✨ **Badge de Prazo no card — 2026-06-16.** Novo helper
   `formatDueDate()` em `src/lib/dates.ts` com 4 tons (overdue/urgent/
   soon/normal). Renderizado em `DueBadge` no card da lista.
-- ✅ **Esc na captura não traz o painel principal — 2026-06-16.** Novo
+- ✅ 🐛 **Esc na captura não traz o painel principal — 2026-06-16.** Novo
   command Rust `hide_main_window`. `closeWindow({cancelled:true})` em
   CaptureScreen esconde a main antes da capture quando user aperta Esc.
   Envio bem-sucedido mantém comportamento atual (main visível).
-- ✅ **Filtro de data + ordenação por prazo — 2026-06-16.** Estados
+- ✅ ✨ **Filtro de data + ordenação por prazo — 2026-06-16.** Estados
   `dateFilter` e `sortOrder` no DashboardScreen, renderizados na
   FilterBar com `<input type="date">` e 2 botões (↑↓). Demandas sem
   due_date vão pro fim da ordenação independente da direção.
-- ✅ **Cmd+K busca em comentários — 2026-06-16.** RPC
+- ✅ ✨ **Cmd+K busca em comentários — 2026-06-16.** RPC
   `search_comment_demand_ids(q)` em migration nova. SearchPalette mantém
   busca local (título/descrição/tags) e adiciona busca server-side
   debounced 250ms em comments, mostrando excerpt no resultado.
-- ✅ **Notificações de prazo 5d/3d/24h — 2026-06-16.** Tabela
+- ✅ ✨ **Notificações de prazo 5d/3d/24h — 2026-06-16.** Tabela
   `demand_due_notifications` (PK composta deduplica), função SQL
   `compute_due_notifications()`, agendamento via pg_cron diário às 09h
   UTC. Cliente escuta realtime e dispara notif local. Respeita
   `profiles.notifications.due_soon`. **Nota:** pg_cron precisa estar
   habilitado no Supabase (Dashboard → Extensions); se não estiver, a
   função pode ser chamada manualmente.
-- ✅ **Painel de preferências de notificação — 2026-06-16.** Componente
+- ✅ ✨ **Painel de preferências de notificação — 2026-06-16.** Componente
   `NotificationSettings.tsx` com 4 toggles (assigned / due_soon /
   comments / completed). Persiste em `profiles.notifications` JSONB já
   existente. `notificationDecider` agora consulta as prefs antes de
   emitir notificações de atribuição, comentário e conclusão.
-- ✅ **Excluir demanda + anexos — 2026-06-16.** `deleteDemand()` em
+- ✅ ✨ **Excluir demanda + anexos — 2026-06-16.** `deleteDemand()` em
   `src/lib/demands.ts` lista anexos → remove do Storage → delete na row
   (CASCADE limpa comments, attachments, demand_history,
   demand_due_notifications). Botão "Excluir demanda" no drawer (admin
   OU autor), com modal de confirmação. Policy
   `demands_delete_own_or_admin` já existia desde Sprint inicial.
-- ✅ **Painel de desempenho (admin) — 2026-06-16.** RPC
+- ✅ ✨ **Painel de desempenho (admin) — 2026-06-16.** RPC
   `member_performance_metrics(start_date, end_date)` agrega por membro:
   concluídas no período, em aberto, atrasadas, tempo médio total,
   tempo de resposta (todo→doing) e tempo de execução (doing→done) via
   `demand_history`. Componente `PerformancePanel.tsx` com filtro de
   período (7d/30d/90d/custom). Botão visível só pra admin no header.
-- ✅ **Navegação entre anexos com setas — 2026-06-16.** `PreviewPayload`
+- ✅ ✨ **Navegação entre anexos com setas — 2026-06-16.** `PreviewPayload`
   agora carrega `items[]` + `currentIndex`. PreviewScreen escuta
   ←/→ via window keydown e, pra PDF (que sequestra foco do iframe),
   registra atalhos globais escopados ao foco da janela. UI mostra
   contador "N / M" e setinhas no header quando há múltiplos anexos.
-- ✅ **Bump v0.1.5 — 2026-06-16.** Versão em `package.json`,
+- ✅ ✨ **Bump v0.1.5 — 2026-06-16.** Versão em `package.json`,
   `src-tauri/tauri.conf.json` e `src-tauri/Cargo.toml`. Type-check
   passa. Release deve ser criada SÓ após validação manual das 12
   features pelo time.

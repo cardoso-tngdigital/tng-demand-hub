@@ -316,15 +316,13 @@ function DemandDetailBody({
           </dl>
         </Section>
 
-        {isAdmin && (
-          <Section title="Histórico (admin)">
-            <HistoryList
-              demandId={demand.id}
-              clients={clients}
-              profiles={profiles}
-            />
-          </Section>
-        )}
+        <Section title="Histórico">
+          <HistoryList
+            demandId={demand.id}
+            clients={clients}
+            profiles={profiles}
+          />
+        </Section>
 
         {canDelete && (
           <Section title="Zona de perigo">
