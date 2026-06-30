@@ -11,6 +11,15 @@ export type DemandInfrastructure = "wordpress" | "site_ia";
 export type CapturedVia = "hotkey" | "tray" | "manual";
 export type UserRole = "admin" | "member";
 export type ClientStatus = "active" | "inactive";
+export type ClientProjectPhase = "not_started" | "in_development" | "developed";
+
+// Labels em pt-BR pra renderizar no UI. Mantenha em sincronia com a migration
+// 20260629000002_client_project_phase.sql.
+export const CLIENT_PROJECT_PHASE_LABELS: Record<ClientProjectPhase, string> = {
+  not_started: "Não iniciado",
+  in_development: "Em desenvolvimento",
+  developed: "Desenvolvido",
+};
 
 export interface NotificationPrefs {
   assigned: boolean;
@@ -59,6 +68,7 @@ export interface Client {
   email: string | null;
   phone: string | null;
   status: ClientStatus;
+  project_phase: ClientProjectPhase;
   notes: string | null;
   google_business_urls: ClientLink[];
   drive_urls: ClientLink[];
@@ -140,6 +150,18 @@ export interface Attachment {
 export interface Comment {
   id: string;
   demand_id: string;
+  author_id: string;
+  content: string;
+  mentions: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+// Mesmo formato do `Comment` mas vinculado a um cliente (Sprint 20).
+// Tabela separada `client_comments` — não compartilha rows com `comments`.
+export interface ClientComment {
+  id: string;
+  client_id: string;
   author_id: string;
   content: string;
   mentions: string[];

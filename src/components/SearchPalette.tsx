@@ -1,7 +1,26 @@
+// =============================================================================
+// SearchPalette — busca rápida estilo Linear (Cmd/Ctrl + K)
+// =============================================================================
+// Agrupa resultados em 3 seções: Clientes, Demandas, Comentários.
+// - Clientes: matches em name/alias/email/notes (client-side).
+// - Demandas: matches em title/descrição (em texto plano)/tags (client-side),
+//   sempre com o nome do cliente (quando houver) concatenado pro haystack,
+//   pra que digitar o nome do cliente liste suas demandas.
+// - Comentários: server-side via RPC `search_comment_demand_ids` (Sprint 14).
+//
+// Normalização: todos os campos passam por NFD + lowercase pra que "metodo"
+// case com "Método Ambiental" (sem isso, "é" ≠ "e" em string compare).
+// =============================================================================
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
 import { supabase } from "../lib/supabase/client";
-import type { Demand, DemandPriority, DemandStatus } from "../types/database";
+import type {
+  Client,
+  Demand,
+  DemandPriority,
+  DemandStatus,
+} from "../types/database";
 
 type CommentMatch = { demand_id: string; excerpt: string };
 
@@ -19,50 +38,61 @@ const PRIORITY_DOT: Record<DemandPriority, string> = {
   urgente: "bg-red-500",
 };
 
-const MAX_RESULTS = 10;
+const MAX_PER_GROUP = 8;
 const COMMENT_DEBOUNCE_MS = 250;
 
-type Scored = { demand: Demand; score: number; commentExcerpt: string | null };
-
-/**
- * Pontua a demanda contra a query. Maior é melhor; zero significa "fora".
- * Match no título vale mais que descrição, que vale mais que tag.
- */
-function scoreDemand(demand: Demand, q: string): number {
-  if (!q) return 1;
-  const norm = (s: string) => s.toLowerCase();
-  const query = norm(q);
-  let score = 0;
-  if (norm(demand.title).includes(query)) score += 5;
-  // Descrição é HTML/markdown — busca no texto plano.
-  if (norm(htmlToPlainText(legacyToHtml(demand.description))).includes(query)) score += 3;
-  for (const tag of demand.tags) {
-    if (norm(tag).includes(query)) {
-      score += 2;
-      break;
-    }
-  }
-  return score;
+// NFD decompõe acentos em letras base + diacrítico; o regex tira só os
+// diacríticos. Resultado: "Método" → "metodo", "ação" → "acao". Casamento
+// fica resistente a digitação sem acento, que é o caso comum.
+function normalize(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
+
+type ClientResult = {
+  kind: "client";
+  client: Client;
+  score: number;
+};
+
+type DemandResult = {
+  kind: "demand";
+  demand: Demand;
+  clientName: string | null;
+  score: number;
+};
+
+type CommentResult = {
+  kind: "comment";
+  demand: Demand;
+  clientName: string | null;
+  excerpt: string;
+};
+
+type AnyResult = ClientResult | DemandResult | CommentResult;
 
 export function SearchPalette({
   open,
   demands,
+  clients,
   onClose,
-  onSelect,
+  onSelectDemand,
+  onSelectClient,
 }: {
   open: boolean;
   demands: Demand[];
+  // Pode ser null (Dashboard ainda não carregou clientes completos —
+  // sem dados de cliente, busca de clientes fica vazia mas demandas
+  // e comentários continuam funcionando).
+  clients: Client[] | null;
   onClose: () => void;
-  onSelect: (demandId: string) => void;
+  onSelectDemand: (demandId: string) => void;
+  onSelectClient: (clientId: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  // Matches vindos de busca server-side em comments (debounced).
   const [commentMatches, setCommentMatches] = useState<CommentMatch[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Reseta input e foco quando abre
   useEffect(() => {
     if (!open) return;
     setQuery("");
@@ -72,9 +102,7 @@ export function SearchPalette({
     return () => window.clearTimeout(t);
   }, [open]);
 
-  // Busca em comentários: debounced, só dispara após 2 chars pra não floodar
-  // o backend. Resultados ficam armazenados em commentMatches e são
-  // mesclados com a busca local em `results`.
+  // Busca em comentários: debounced, só dispara após 2 chars.
   useEffect(() => {
     if (!open) return;
     const trimmed = query.trim();
@@ -101,31 +129,105 @@ export function SearchPalette({
     };
   }, [open, query]);
 
-  const results = useMemo<Scored[]>(() => {
-    const trimmed = query.trim();
-    const commentByDemandId = new Map(commentMatches.map((m) => [m.demand_id, m.excerpt]));
-    return demands
-      .map((d) => {
-        const score = scoreDemand(d, trimmed);
-        const commentExcerpt = commentByDemandId.get(d.id) ?? null;
-        // Match em comentário soma 1 — abaixo de tag (2) pra que matches mais
-        // diretos no campo da demanda apareçam primeiro.
-        const total = score + (commentExcerpt ? 1 : 0);
-        return { demand: d, score: total, commentExcerpt };
-      })
-      .filter((r) => r.score > 0)
-      .sort((a, b) => b.score - a.score || (a.demand.title || "").localeCompare(b.demand.title || ""))
-      .slice(0, MAX_RESULTS);
-  }, [demands, query, commentMatches]);
+  // Mapa rápido client_id → Client pra hidratar nome do cliente nas demandas.
+  const clientById = useMemo(() => {
+    const map = new Map<string, Client>();
+    for (const c of clients ?? []) map.set(c.id, c);
+    return map;
+  }, [clients]);
 
-  // Mantém o índice ativo dentro do range conforme os resultados mudam
-  useEffect(() => {
-    if (activeIndex >= results.length) {
-      setActiveIndex(Math.max(0, results.length - 1));
+  const grouped = useMemo(() => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      return { clients: [] as ClientResult[], demands: [] as DemandResult[], comments: [] as CommentResult[] };
     }
-  }, [results, activeIndex]);
+    const q = normalize(trimmed);
+
+    // ---- Clientes ----
+    const clientResults: ClientResult[] = [];
+    for (const c of clients ?? []) {
+      const haystack = normalize(
+        [c.name, c.alias ?? "", c.email ?? "", c.notes ?? ""].join(" "),
+      );
+      if (!haystack.includes(q)) continue;
+      // Score: nome 5, alias 3, email 2, notas 1.
+      let score = 0;
+      if (normalize(c.name).includes(q)) score += 5;
+      if (c.alias && normalize(c.alias).includes(q)) score += 3;
+      if (c.email && normalize(c.email).includes(q)) score += 2;
+      if (c.notes && normalize(c.notes).includes(q)) score += 1;
+      clientResults.push({ kind: "client", client: c, score });
+    }
+    clientResults.sort((a, b) => b.score - a.score || a.client.name.localeCompare(b.client.name));
+
+    // ---- Demandas ----
+    const demandResults: DemandResult[] = [];
+    for (const d of demands) {
+      const client = d.client_id ? clientById.get(d.client_id) ?? null : null;
+      const clientName = client?.name ?? null;
+      const titleN = normalize(d.title);
+      const descN = normalize(htmlToPlainText(legacyToHtml(d.description)));
+      const tagsN = d.tags.map(normalize);
+      const clientN = clientName ? normalize(clientName) : "";
+      const aliasN = client?.alias ? normalize(client.alias) : "";
+
+      let score = 0;
+      if (titleN.includes(q)) score += 5;
+      if (descN.includes(q)) score += 3;
+      if (tagsN.some((t) => t.includes(q))) score += 2;
+      // Match no nome do cliente sobe a demanda — comum usuário digitar
+      // "metodo" pra achar as demandas do cliente Método Ambiental.
+      if (clientN.includes(q) || aliasN.includes(q)) score += 2;
+      if (score > 0) {
+        demandResults.push({ kind: "demand", demand: d, clientName, score });
+      }
+    }
+    demandResults.sort((a, b) => b.score - a.score || (a.demand.title || "").localeCompare(b.demand.title || ""));
+
+    // ---- Comentários (server-side, já filtrado por similaridade) ----
+    const commentResults: CommentResult[] = [];
+    const demandById = new Map(demands.map((d) => [d.id, d]));
+    for (const m of commentMatches) {
+      const d = demandById.get(m.demand_id);
+      if (!d) continue;
+      const client = d.client_id ? clientById.get(d.client_id) ?? null : null;
+      commentResults.push({
+        kind: "comment",
+        demand: d,
+        clientName: client?.name ?? null,
+        excerpt: m.excerpt,
+      });
+    }
+
+    return {
+      clients: clientResults.slice(0, MAX_PER_GROUP),
+      demands: demandResults.slice(0, MAX_PER_GROUP),
+      comments: commentResults.slice(0, MAX_PER_GROUP),
+    };
+  }, [clients, demands, query, commentMatches, clientById]);
+
+  // Lista flat unificada na ordem de exibição — pra navegação por setas.
+  const flat = useMemo<AnyResult[]>(
+    () => [...grouped.clients, ...grouped.demands, ...grouped.comments],
+    [grouped],
+  );
+
+  useEffect(() => {
+    if (activeIndex >= flat.length) {
+      setActiveIndex(Math.max(0, flat.length - 1));
+    }
+  }, [flat, activeIndex]);
 
   if (!open) return null;
+
+  function pick(r: AnyResult) {
+    if (r.kind === "client") {
+      onSelectClient(r.client.id);
+    } else {
+      onSelectDemand(r.demand.id);
+    }
+    onClose();
+  }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === "Escape") {
@@ -135,7 +237,7 @@ export function SearchPalette({
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, results.length - 1));
+      setActiveIndex((i) => Math.min(i + 1, flat.length - 1));
       return;
     }
     if (e.key === "ArrowUp") {
@@ -145,13 +247,14 @@ export function SearchPalette({
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      const chosen = results[activeIndex];
-      if (chosen) {
-        onSelect(chosen.demand.id);
-        onClose();
-      }
+      const chosen = flat[activeIndex];
+      if (chosen) pick(chosen);
     }
   }
+
+  // Calcula o índice global de cada resultado dentro de cada grupo, pra
+  // saber qual está "ativo" durante a renderização.
+  let runningIndex = 0;
 
   return (
     <div
@@ -169,7 +272,7 @@ export function SearchPalette({
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar em título, descrição, tags ou comentários…"
+            placeholder="Buscar clientes, demandas e comentários…"
             className="flex-1 bg-transparent text-sm text-tng-marine-50 placeholder:text-tng-marine-400 focus:outline-none"
           />
           <kbd className="rounded bg-tng-marine-700 px-1.5 py-0.5 text-[10px] text-tng-marine-300">
@@ -177,27 +280,67 @@ export function SearchPalette({
           </kbd>
         </div>
 
-        <div className="max-h-80 overflow-y-auto">
-          {results.length === 0 ? (
+        <div className="max-h-96 overflow-y-auto">
+          {flat.length === 0 ? (
             <p className="px-4 py-6 text-center text-xs text-tng-marine-400">
               {query.trim() ? "Nada encontrado." : "Digite para buscar."}
             </p>
           ) : (
-            <ul>
-              {results.map((r, i) => (
-                <ResultRow
-                  key={r.demand.id}
-                  demand={r.demand}
-                  commentExcerpt={r.commentExcerpt}
-                  active={i === activeIndex}
-                  onMouseEnter={() => setActiveIndex(i)}
-                  onClick={() => {
-                    onSelect(r.demand.id);
-                    onClose();
-                  }}
-                />
-              ))}
-            </ul>
+            <>
+              {grouped.clients.length > 0 && (
+                <Group label="Clientes" count={grouped.clients.length}>
+                  {grouped.clients.map((r) => {
+                    const i = runningIndex++;
+                    return (
+                      <ClientRow
+                        key={`c-${r.client.id}`}
+                        client={r.client}
+                        active={i === activeIndex}
+                        onMouseEnter={() => setActiveIndex(i)}
+                        onClick={() => pick(r)}
+                      />
+                    );
+                  })}
+                </Group>
+              )}
+
+              {grouped.demands.length > 0 && (
+                <Group label="Demandas" count={grouped.demands.length}>
+                  {grouped.demands.map((r) => {
+                    const i = runningIndex++;
+                    return (
+                      <DemandRow
+                        key={`d-${r.demand.id}`}
+                        demand={r.demand}
+                        clientName={r.clientName}
+                        active={i === activeIndex}
+                        onMouseEnter={() => setActiveIndex(i)}
+                        onClick={() => pick(r)}
+                      />
+                    );
+                  })}
+                </Group>
+              )}
+
+              {grouped.comments.length > 0 && (
+                <Group label="Comentários" count={grouped.comments.length}>
+                  {grouped.comments.map((r) => {
+                    const i = runningIndex++;
+                    return (
+                      <CommentRow
+                        key={`cm-${r.demand.id}`}
+                        demand={r.demand}
+                        clientName={r.clientName}
+                        excerpt={r.excerpt}
+                        active={i === activeIndex}
+                        onMouseEnter={() => setActiveIndex(i)}
+                        onClick={() => pick(r)}
+                      />
+                    );
+                  })}
+                </Group>
+              )}
+            </>
           )}
         </div>
 
@@ -209,25 +352,43 @@ export function SearchPalette({
           <span>
             <kbd className="rounded bg-tng-marine-700 px-1 py-0.5">↵</kbd> abrir
           </span>
-          <span>{results.length} resultado{results.length === 1 ? "" : "s"}</span>
+          <span>{flat.length} resultado{flat.length === 1 ? "" : "s"}</span>
         </div>
       </div>
     </div>
   );
 }
 
-function ResultRow({
-  demand,
-  commentExcerpt,
+function Group({
+  label,
+  count,
+  children,
+}: {
+  label: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <header className="sticky top-0 z-[1] flex items-center justify-between border-b border-tng-marine-700/60 bg-tng-marine-800/95 px-4 py-1.5 text-[9px] uppercase tracking-wider text-tng-marine-400 backdrop-blur">
+        <span>{label}</span>
+        <span className="tabular-nums">{count}</span>
+      </header>
+      <ul>{children}</ul>
+    </section>
+  );
+}
+
+function RowShell({
   active,
   onMouseEnter,
   onClick,
+  children,
 }: {
-  demand: Demand;
-  commentExcerpt: string | null;
   active: boolean;
   onMouseEnter: () => void;
   onClick: () => void;
+  children: React.ReactNode;
 }) {
   return (
     <li
@@ -237,25 +398,96 @@ function ResultRow({
         active ? "bg-tng-marine-700" : "hover:bg-tng-marine-700/40"
       }`}
     >
+      {children}
+    </li>
+  );
+}
+
+function ClientRow({
+  client,
+  active,
+  onMouseEnter,
+  onClick,
+}: {
+  client: Client;
+  active: boolean;
+  onMouseEnter: () => void;
+  onClick: () => void;
+}) {
+  return (
+    <RowShell active={active} onMouseEnter={onMouseEnter} onClick={onClick}>
+      <i className="fa-solid fa-building w-4 shrink-0 text-tng-orange-300" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-tng-marine-50">{client.name}</p>
+        {client.alias && (
+          <p className="truncate text-[10px] text-tng-marine-400">{client.alias}</p>
+        )}
+      </div>
+      <span className="shrink-0 rounded-full bg-tng-marine-700/80 px-2 py-0.5 text-[9px] uppercase tracking-wider text-tng-marine-200">
+        Cliente
+      </span>
+    </RowShell>
+  );
+}
+
+function DemandRow({
+  demand,
+  clientName,
+  active,
+  onMouseEnter,
+  onClick,
+}: {
+  demand: Demand;
+  clientName: string | null;
+  active: boolean;
+  onMouseEnter: () => void;
+  onClick: () => void;
+}) {
+  return (
+    <RowShell active={active} onMouseEnter={onMouseEnter} onClick={onClick}>
       <span className={`h-2 w-2 shrink-0 rounded-full ${PRIORITY_DOT[demand.priority]}`} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium text-tng-marine-50">
           {demand.title || htmlToPlainText(legacyToHtml(demand.description)).slice(0, 80)}
         </p>
-        {commentExcerpt ? (
-          <p className="truncate text-[10px] text-tng-marine-400">
-            <i className="fa-regular fa-comment mr-1" aria-hidden="true" />
-            …{commentExcerpt}…
-          </p>
-        ) : demand.title && demand.description ? (
-          <p className="truncate text-[10px] text-tng-marine-400">
-            {htmlToPlainText(legacyToHtml(demand.description))}
-          </p>
-        ) : null}
+        {clientName && (
+          <p className="truncate text-[10px] text-tng-marine-400">{clientName}</p>
+        )}
       </div>
       <span className="shrink-0 rounded-full bg-tng-marine-700/80 px-2 py-0.5 text-[9px] uppercase tracking-wider text-tng-marine-200">
         {STATUS_LABEL[demand.status]}
       </span>
-    </li>
+    </RowShell>
+  );
+}
+
+function CommentRow({
+  demand,
+  clientName,
+  excerpt,
+  active,
+  onMouseEnter,
+  onClick,
+}: {
+  demand: Demand;
+  clientName: string | null;
+  excerpt: string;
+  active: boolean;
+  onMouseEnter: () => void;
+  onClick: () => void;
+}) {
+  return (
+    <RowShell active={active} onMouseEnter={onMouseEnter} onClick={onClick}>
+      <i className="fa-regular fa-comment w-4 shrink-0 text-tng-marine-400" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[11px] text-tng-marine-200">
+          …{excerpt}…
+        </p>
+        <p className="truncate text-[10px] text-tng-marine-400">
+          em: {demand.title || htmlToPlainText(legacyToHtml(demand.description)).slice(0, 60)}
+          {clientName && <span className="text-tng-marine-500"> · {clientName}</span>}
+        </p>
+      </div>
+    </RowShell>
   );
 }

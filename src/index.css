@@ -103,6 +103,47 @@
   select:not(:disabled) {
     cursor: pointer;
   }
+
+}
+
+/* =============================================================================
+   Scrollbar dark — combina com o tema azul-marinho
+   =============================================================================
+   Mantemos fora do `@layer base` de propósito: dentro do layer, o
+   seletor `*` tem precedência baixa e algumas regras do Tailwind v4
+   acabam vencendo (deixando o thumb branco padrão do macOS).
+   - Firefox: `scrollbar-color`/`scrollbar-width` no <html>.
+   - Webkit/Blink (macOS/Windows com Chromium): pseudo-elements em todos
+     os elementos com overflow.
+   - macOS só renderiza scrollbar customizada quando o usuário tem
+     "Always" em System Settings → Appearance → Show scroll bars.
+     "Automatically" ainda mostra a default em overlays. Sem como
+     contornar via CSS — é decisão do SO. */
+
+html {
+  scrollbar-color: var(--color-tng-marine-600) transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-tng-marine-600);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-tng-marine-500);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* =============================================================================

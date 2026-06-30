@@ -1260,6 +1260,116 @@ Quando reativar:
 - Correção de bugs do uso real
 - Documentação de uso interna
 
+## Sprint 20 — Painel de clientes como visualização (v0.1.11) — 2026-06-29
+
+Terceiro modo de visualização da Dashboard ("Por cliente") ao lado de
+Lista e Kanban. Em vez de iterar demandas como cards soltos, agora
+podemos partir do cliente como entidade central e ver as demandas
+dentro do drawer dele. Drawer empilhado: clicar numa demanda dentro
+do `ClientDetailDrawer` abre o `DemandDetailDrawer` por cima sem
+fechar o de baixo.
+
+- ✅ ✨ Migration `20260629000002_client_project_phase.sql` — 2026-06-29.
+  Coluna nova em `clients` com check constraint (`not_started` |
+  `in_development` | `developed`) e default `not_started`. Comentário
+  documenta a semântica.
+- ✅ ✨ Tipo `ClientProjectPhase` + `CLIENT_PROJECT_PHASE_LABELS` —
+  2026-06-29. `src/types/database.ts` ganha o enum e o map de labels
+  pt-BR. `Client` ganha o campo. `ClientInput`/`ClientPatch` em
+  `lib/clients.ts` aceitam o campo; `createClient` aplica
+  `not_started` como default no insert; `updateClient` propaga.
+- ✅ ✨ `listDemandsByClient` + `listClientDemandCounts` — 2026-06-29.
+  Helpers em `src/lib/demands.ts`. `listDemandsByClient` puxa
+  ordenado por `created_at desc` sem limite (cardinalidade baixa por
+  cliente). `listClientDemandCounts` faz SELECT minimalista de
+  `(client_id, status)` e agrega em JS — barato pra ~100 clientes.
+- ✅ ✨ Select de "Fase do projeto" no ClientForm — 2026-06-29.
+  Campo novo no form de criar/editar cliente em `ClientsAdmin.tsx`.
+  Default `not_started` em novos cadastros.
+- ✅ ✨ `ClientsPanelView` — 2026-06-29. Grade responsiva (1-4 colunas
+  conforme breakpoint) de cards de cliente com nome, alias, badge da
+  fase (cinza/laranja/verde), contadores `N abertas · M totais`
+  (derivado de `demands` local via `useMemo`) e link count quando
+  houver. Busca em `name+alias+email` com normalização de acento.
+  Só clientes ativos.
+- ✅ ✨ `ClientDetailDrawer` — 2026-06-29. Drawer 680px na direita.
+  Header com nome, alias e select de fase inline (cores casam com o
+  badge dos cards e atualizam o cliente via `updateClient`). Info
+  bar com email/telefone/status. Links (reusa o padrão de Sprint 16
+  pra GMN/WA/Drive com label da unidade). Notas internas. Lista de
+  demandas com filtros (todas/abertas/concluídas), mini-cards com
+  dot de status + título + data + prazo. Click abre o
+  `DemandDetailDrawer` empilhado.
+- ✅ ✨ Drawer empilhado: cliente → demanda — 2026-06-29.
+  `DemandDetailDrawer` sobe pra `z-50` (era `z-40`); `ClientDetailDrawer`
+  fica em `z-40` (backdrop `z-30`). Prop `escDisabled` no
+  `ClientDetailDrawer` evita conflito: o handler do ESC só fecha o
+  topo da pilha — quando há `DemandDetailDrawer` aberto, o ESC do
+  cliente é silenciado.
+- ✅ ✨ Toggle 3 modos na Dashboard — 2026-06-29. `ViewToggle` ganha
+  terceiro botão "Por cliente" (ícone `fa-users`). `viewMode` agora
+  tipa `"list" | "kanban" | "clients"`. Quando ativo, `DashboardScreen`
+  carrega `Client[]` completos via `listAllClients` sob demanda (cache
+  no state `fullClients`) — só na 1ª entrada do modo.
+- ✅ ✨ Ajustes pós-feedback no painel de clientes — 2026-06-29.
+  Rodada de refinamentos UX baseada no primeiro teste do user:
+  - Botão "Por cliente" sem ícone (mais limpo no toggle).
+  - `ClientsPanelView` virou lista de uma coluna em vez de grade (user
+    achou que grade dificultava a leitura).
+  - Fase no drawer virou 3 botões radio-like visíveis (clique único,
+    sem precisar abrir um `<select>` antes). Estado "ativo" usa o
+    badge com fundo cheio.
+  - Notas internas no drawer agora são editáveis (textarea + save on
+    blur via `updateClient`); o caller recebe o cliente atualizado
+    via `onPatchClient` pra refletir na lista.
+- ✅ ✨ Comentários por cliente — 2026-06-29. Nova tabela
+  `client_comments` (migration `20260629000003_client_comments.sql`)
+  com RLS espelhando `comments`: SELECT/INSERT pra membros ativos,
+  DELETE só admin. Realtime habilitado. `src/lib/clientComments.ts`
+  com CRUD + subscribe; `ClientCommentsThread.tsx` renderiza thread
+  minimalista (texto puro, sem menções por enquanto) no fim do
+  drawer do cliente.
+- ✅ ✨ SettingsPanel consolida 7 botões do header — 2026-06-29.
+  Botão de engrenagem único substitui Clientes, Membros, Uso IA,
+  Regras, Desempenho, Notificações e Atalho. SettingsPanel é uma
+  tela com cards descritivos pra cada admin; click delega abertura
+  pro Dashboard via `onOpen(key)` que aciona o setter individual
+  (preserva refresh effects). "Desempenho" gated pra admin. Rodapé
+  mostra a versão do app lendo `package.json`. Cabeçalho do
+  Dashboard fica com Toggle + engrenagem + usuário + Sair.
+- ✅ ✨ Header em 3 colunas centralizando o ViewToggle — 2026-06-29.
+  Grid `[1fr_auto_1fr]` garante que os botões "Lista | Kanban | Por
+  cliente" ficam centralizados em relação à janela (não em relação
+  ao espaço residual). Engrenagem perdeu borda e ganhou padding
+  reduzido — vira ícone discreto no estilo do sino que substituiu.
+- ✅ ✨ Busca inclui clientes + agrupamento por tipo — 2026-06-29.
+  `SearchPalette` agora separa resultados em 3 seções (Clientes,
+  Demandas, Comentários) com headers sticky. Click em cliente abre
+  `ClientDetailDrawer`; demanda/comentário abrem `DemandDetailDrawer`.
+  Dashboard passa `fullClients` pro palette e força carregamento
+  quando o palette abre (mesmo sem o user ter entrado no painel
+  "Por cliente").
+- ✅ 🐛 Busca não pegava palavras acentuadas — 2026-06-29. Antes,
+  digitar "metodo" não casava com "Método Ambiental" porque o
+  `scoreDemand` só fazia `toLowerCase()`. Adicionada normalização
+  NFD + regex pra remover diacríticos em todos os haystacks
+  (título, descrição, tags, nome do cliente). "metodo" agora bate
+  com "Método", "acao" com "ação", etc.
+- ✅ ✨ Busca também casa pelo nome do cliente — 2026-06-29.
+  `scoreDemand` agora inclui `client.name`/`client.alias` no
+  haystack das demandas. Digitar o nome de um cliente lista
+  todas as demandas dele.
+- ✅ ✨ Botão de busca no header com atalho dinâmico — 2026-06-29.
+  Novo botão ao lado da engrenagem mostra "⌘ K" no macOS e "Ctrl
+  K" no Windows/Linux (detectado via `navigator.platform`).
+  Acessível à mão pro user que não conhece o atalho.
+- ✅ ✨ Scrollbar dark global — 2026-06-29. CSS global em
+  `index.css` (Webkit + Firefox `scrollbar-color`/`-width`)
+  substitui o scrollbar branco padrão do macOS por trilha
+  transparente com thumb em `tng-marine-600` (hover sobe pra
+  500). Combina com o fundo escuro do app.
+- ✅ ✨ Bump 0.1.10 → 0.1.11 — 2026-06-29.
+
 ## Sprint 19 — Reorg + busca de clientes + histórico para membros (v0.1.10) — 2026-06-29
 
 Sprint de polimento e organização. Padroniza a marcação dos registros

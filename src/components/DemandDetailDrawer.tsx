@@ -89,7 +89,7 @@ export function DemandDetailDrawer({
 
   return (
     <div
-      className={`fixed inset-0 z-40 transition-opacity ${
+      className={`fixed inset-0 z-50 transition-opacity ${
         open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
       }`}
       aria-hidden={!open}

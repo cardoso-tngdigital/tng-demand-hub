@@ -6,7 +6,12 @@ import {
   updateClient,
   type ClientInput,
 } from "../lib/clients";
-import type { Client, ClientLink } from "../types/database";
+import {
+  CLIENT_PROJECT_PHASE_LABELS,
+  type Client,
+  type ClientLink,
+  type ClientProjectPhase,
+} from "../types/database";
 
 // Normaliza acento + case-fold pra que "espaço" case com "Espaco" etc.
 function normalizeSearch(s: string): string {
@@ -313,6 +318,9 @@ function ClientForm({
   const [alias, setAlias] = useState(initial?.alias ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
+  const [projectPhase, setProjectPhase] = useState<ClientProjectPhase>(
+    initial?.project_phase ?? "not_started",
+  );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   // 3 arrays dinâmicos de {label,url}. Cada um sempre tem pelo menos 1 linha
   // visível pra UX previsível. Vazios são limpos no lib/clients.ts antes do save.
@@ -331,6 +339,7 @@ function ClientForm({
       email: email || null,
       phone: phone || null,
       notes: notes || null,
+      project_phase: projectPhase,
       google_business_urls: gmnLinks,
       drive_urls: driveLinks,
       whatsapp_group_urls: waLinks,
@@ -366,6 +375,21 @@ function ClientForm({
       <Field label="Telefone">
         <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />
       </Field>
+      <div className="col-span-2">
+        <Field label="Fase do projeto">
+          <select
+            value={projectPhase}
+            onChange={(e) => setProjectPhase(e.target.value as ClientProjectPhase)}
+            className={inputClass}
+          >
+            {(Object.keys(CLIENT_PROJECT_PHASE_LABELS) as ClientProjectPhase[]).map((k) => (
+              <option key={k} value={k}>
+                {CLIENT_PROJECT_PHASE_LABELS[k]}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
       <div className="col-span-2">
         <Field label="Notas internas">
           <textarea

@@ -1,5 +1,10 @@
 import { supabase } from "./supabase/client";
-import type { Client, ClientLink, ClientStatus } from "../types/database";
+import type {
+  Client,
+  ClientLink,
+  ClientProjectPhase,
+  ClientStatus,
+} from "../types/database";
 
 export type ClientInput = {
   name: string;
@@ -8,6 +13,7 @@ export type ClientInput = {
   phone?: string | null;
   notes?: string | null;
   status?: ClientStatus;
+  project_phase?: ClientProjectPhase;
   // Listas já saneadas (sem itens vazios). O ClientsAdmin pode passar
   // arrays com `url` em branco — `cleanLinkArray` filtra antes de gravar.
   google_business_urls?: ClientLink[];
@@ -47,6 +53,7 @@ export async function createClient(
     phone: input.phone?.trim() || null,
     notes: input.notes?.trim() || null,
     status: input.status ?? "active",
+    project_phase: input.project_phase ?? "not_started",
     google_business_urls: cleanLinkArray(input.google_business_urls),
     drive_urls: cleanLinkArray(input.drive_urls),
     whatsapp_group_urls: cleanLinkArray(input.whatsapp_group_urls),
@@ -80,6 +87,7 @@ export async function updateClient(
   if (patch.phone !== undefined) payload.phone = patch.phone?.trim() || null;
   if (patch.notes !== undefined) payload.notes = patch.notes?.trim() || null;
   if (patch.status !== undefined) payload.status = patch.status;
+  if (patch.project_phase !== undefined) payload.project_phase = patch.project_phase;
   if (patch.google_business_urls !== undefined) {
     payload.google_business_urls = cleanLinkArray(patch.google_business_urls);
   }

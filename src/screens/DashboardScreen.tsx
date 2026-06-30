@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { listDemands, subscribeToDemands, updateDemand } from "../lib/demands";
+import {
+  listDemands,
+  subscribeToDemands,
+  updateDemand,
+  type ClientDemandCount,
+} from "../lib/demands";
+import { listAllClients } from "../lib/clients";
 import { subscribeToAllCommentInserts } from "../lib/comments";
 import {
   bucketToLabel,
@@ -22,6 +28,9 @@ import { DemandDetailDrawer } from "../components/DemandDetailDrawer";
 import { KanbanBoard } from "../components/KanbanBoard";
 import { SearchPalette } from "../components/SearchPalette";
 import { ClientsAdmin } from "../components/ClientsAdmin";
+import { ClientsPanelView } from "../components/ClientsPanelView";
+import { ClientDetailDrawer } from "../components/ClientDetailDrawer";
+import { SettingsPanel, type SettingsPanelKey } from "../components/SettingsPanel";
 import { MembersAdmin } from "../components/MembersAdmin";
 import { AiUsageAdmin } from "../components/AiUsageAdmin";
 import { RulesAdmin } from "../components/RulesAdmin";
@@ -34,6 +43,7 @@ import { listAllProfiles } from "../lib/profiles";
 import { getCurrentHotkeyDisplay } from "../lib/hotkey";
 import { formatDueDate, DUE_TONE_CLASSES } from "../lib/dates";
 import type {
+  Client,
   Demand,
   DemandInfrastructure,
   DemandPriority,
@@ -79,6 +89,12 @@ function formatRelative(iso: string): string {
   return date.toLocaleDateString("pt-BR");
 }
 
+// Detectado uma vez no boot — true em macOS (atalho usa ⌘), false no
+// Windows/Linux (usa Ctrl). userAgent é confiável o bastante pro nosso
+// propósito; userAgentData ainda não é amplo o suficiente.
+const IS_MAC =
+  typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+
 export function DashboardScreen() {
   const { user, signOut } = useAuth();
   const currentUserId = user?.id ?? null;
@@ -94,7 +110,12 @@ export function DashboardScreen() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
   const [clientFilter, setClientFilter] = useState<RefFilter>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<RefFilter>("all");
-  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const [viewMode, setViewMode] = useState<"list" | "kanban" | "clients">("list");
+  // Carregamos clientes completos (com email, phone, project_phase, notes)
+  // sob demanda quando o user entra no modo "clients" — `ClientOption` em
+  // `clients` é só pros selects de filtro/captura.
+  const [fullClients, setFullClients] = useState<Client[] | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [clientsAdminOpen, setClientsAdminOpen] = useState(false);
   const [membersAdminOpen, setMembersAdminOpen] = useState(false);
@@ -103,6 +124,38 @@ export function DashboardScreen() {
   const [hotkeySettingsOpen, setHotkeySettingsOpen] = useState(false);
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [performancePanelOpen, setPerformancePanelOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Sprint 20: o header consolidado abre o SettingsPanel; clicar num cartão
+  // de lá chama esta função, que aciona o setter individual do admin
+  // correspondente. Assim mantemos a lógica de refresh (useEffects que
+  // observam clientsAdminOpen/membersAdminOpen fechando) sem refatorar
+  // cada componente admin.
+  function handleOpenSettingsItem(key: SettingsPanelKey) {
+    switch (key) {
+      case "clients":
+        setClientsAdminOpen(true);
+        break;
+      case "members":
+        setMembersAdminOpen(true);
+        break;
+      case "ai_usage":
+        setAiUsageOpen(true);
+        break;
+      case "rules":
+        setRulesAdminOpen(true);
+        break;
+      case "performance":
+        setPerformancePanelOpen(true);
+        break;
+      case "notifications":
+        setNotificationSettingsOpen(true);
+        break;
+      case "hotkey":
+        setHotkeySettingsOpen(true);
+        break;
+    }
+  }
   const [currentHotkey, setCurrentHotkey] = useState<string>(() =>
     getCurrentHotkeyDisplay(),
   );
@@ -428,6 +481,51 @@ export function DashboardScreen() {
   // Versão do Kanban: usa só os filtros explícitos, sem esconder concluídas.
   const kanbanDemands = baseFiltered;
 
+  // Painel "Por cliente": deriva counts a partir das demandas locais.
+  // Sprint 20 — listDemands tem limite de 100; pra clientes com >100 demandas
+  // total a contagem ficaria inexata, mas o caso é raro hoje e o realtime
+  // mantém o painel reativo a mudanças.
+  const clientCounts = useMemo(() => {
+    const out: Record<string, ClientDemandCount> = {};
+    for (const d of demands) {
+      if (!d.client_id) continue;
+      const entry = (out[d.client_id] ||= { open: 0, total: 0 });
+      entry.total += 1;
+      if (d.status === "todo" || d.status === "doing") entry.open += 1;
+    }
+    return out;
+  }, [demands]);
+
+  const selectedClient = useMemo(() => {
+    if (!selectedClientId || !fullClients) return null;
+    return fullClients.find((c) => c.id === selectedClientId) ?? null;
+  }, [selectedClientId, fullClients]);
+
+  // Carrega clientes completos sob demanda. Quando ClientsAdmin grava
+  // mudanças, ele lida com a própria lista — aqui só carregamos quando o
+  // user entra no modo `clients` pela 1a vez. Refetch manual via
+  // `refreshFullClients` quando o user faz patch via drawer.
+  const refreshFullClients = useCallback(async () => {
+    const { data } = await listAllClients();
+    setFullClients(data);
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== "clients") return;
+    if (fullClients !== null) return;
+    void refreshFullClients();
+  }, [viewMode, fullClients, refreshFullClients]);
+
+  // Carrega clientes completos quando o user abre a busca também — a
+  // SearchPalette inclui clientes como categoria desde Sprint 20. Sem
+  // isso, abrir Cmd+K antes de entrar no painel "Por cliente" não
+  // listaria clientes.
+  useEffect(() => {
+    if (!searchOpen) return;
+    if (fullClients !== null) return;
+    void refreshFullClients();
+  }, [searchOpen, fullClients, refreshFullClients]);
+
   const filtersActive =
     statusFilter !== "all" ||
     priorityFilter !== "all" ||
@@ -460,10 +558,12 @@ export function DashboardScreen() {
     <div className="flex h-screen flex-col bg-tng-marine-900">
       <UpdateBanner />
 
-      {/* Header */}
+      {/* Header em 3 colunas (esquerda/centro/direita) pra que o ViewToggle
+          fique perfeitamente centralizado em relação à janela, não ao
+          espaço restante depois do conteúdo lateral. */}
       <header
         data-tauri-drag-region
-        className="flex items-center justify-between border-b border-tng-marine-700 px-6 py-3"
+        className="relative grid grid-cols-[1fr_auto_1fr] items-center border-b border-tng-marine-700 px-6 py-3"
       >
         <div className="flex items-center gap-3">
           <img src={logoDark} alt="TNG Digital" className="h-8 w-auto" draggable={false} />
@@ -482,67 +582,30 @@ export function DashboardScreen() {
             {realtimeConnected ? "ao vivo" : "offline"}
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex justify-center">
           <ViewToggle mode={viewMode} onChange={setViewMode} />
+        </div>
+        <div className="flex items-center justify-end gap-3">
           <button
             type="button"
-            onClick={() => setClientsAdminOpen(true)}
-            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
-            title="Gerenciar clientes"
+            onClick={() => setSearchOpen(true)}
+            className="flex items-center gap-2 rounded-md border border-tng-marine-700 bg-tng-marine-800/40 px-2.5 py-1 text-[11px] text-tng-marine-300 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
+            title={`Buscar (${IS_MAC ? "⌘" : "Ctrl"} + K)`}
           >
-            Clientes
+            <i className="fa-solid fa-magnifying-glass text-[11px]" aria-hidden="true" />
+            <span className="hidden sm:inline">Buscar</span>
+            <kbd className="rounded bg-tng-marine-700 px-1.5 py-0.5 font-mono text-[10px] text-tng-marine-200">
+              {IS_MAC ? "⌘" : "Ctrl"} K
+            </kbd>
           </button>
           <button
             type="button"
-            onClick={() => setMembersAdminOpen(true)}
-            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
-            title="Gerenciar membros"
+            onClick={() => setSettingsOpen(true)}
+            className="rounded-md p-1 text-tng-marine-300 transition hover:bg-tng-marine-700/60 hover:text-tng-orange-400"
+            title="Configurações"
+            aria-label="Configurações"
           >
-            Membros
-          </button>
-          <button
-            type="button"
-            onClick={() => setAiUsageOpen(true)}
-            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
-            title="Consumo de IA do mês"
-          >
-            Uso IA
-          </button>
-          <button
-            type="button"
-            onClick={() => setRulesAdminOpen(true)}
-            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
-            title="Regras de auto-classificação"
-          >
-            Regras
-          </button>
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => setPerformancePanelOpen(true)}
-              className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
-              title="Desempenho da equipe"
-            >
-              <i className="fa-solid fa-chart-line mr-1.5" aria-hidden="true" />
-              Desempenho
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setNotificationSettingsOpen(true)}
-            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
-            title="Preferências de notificação"
-          >
-            <i className="fa-solid fa-bell" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setHotkeySettingsOpen(true)}
-            className="rounded-md border border-tng-marine-600 px-2.5 py-1 text-[11px] text-tng-marine-200 transition hover:border-tng-orange-400 hover:text-tng-orange-400"
-            title="Configurar atalho da captura"
-          >
-            <i className="fa-solid fa-keyboard mr-1.5" aria-hidden="true" />
-            <span className="font-mono">{currentHotkey}</span>
+            <i className="fa-solid fa-gear text-sm" aria-hidden="true" />
           </button>
           <span
             className="text-xs text-tng-marine-300"
@@ -612,15 +675,27 @@ export function DashboardScreen() {
         onClear={clearFilters}
       />
 
-      {/* Lista ou Kanban */}
+      {/* Lista, Kanban ou Por cliente */}
       <main
         className={
-          viewMode === "list"
+          viewMode === "list" || viewMode === "clients"
             ? "flex-1 overflow-y-auto px-6 py-5"
             : "flex-1 overflow-hidden px-6 py-5"
         }
       >
-        {loading ? (
+        {viewMode === "clients" ? (
+          fullClients === null ? (
+            <div className="flex h-full items-center justify-center text-sm text-tng-marine-300">
+              Carregando clientes…
+            </div>
+          ) : (
+            <ClientsPanelView
+              clients={fullClients}
+              demandCounts={clientCounts}
+              onSelectClient={setSelectedClientId}
+            />
+          )
+        ) : loading ? (
           <div className="flex h-full items-center justify-center text-sm text-tng-marine-300">
             Carregando demandas…
           </div>
@@ -656,6 +731,21 @@ export function DashboardScreen() {
         )}
       </main>
 
+      <ClientDetailDrawer
+        client={selectedClient}
+        profiles={profiles}
+        isAdmin={isAdmin}
+        currentUserId={currentUserId}
+        escDisabled={selectedDemandId !== null}
+        onClose={() => setSelectedClientId(null)}
+        onSelectDemand={setSelectedDemandId}
+        onPatchClient={(next) => {
+          setFullClients((prev) =>
+            prev ? prev.map((c) => (c.id === next.id ? next : c)) : prev,
+          );
+        }}
+      />
+
       <DemandDetailDrawer
         demand={selectedDemand}
         clients={clients}
@@ -668,8 +758,10 @@ export function DashboardScreen() {
       <SearchPalette
         open={searchOpen}
         demands={demands}
+        clients={fullClients}
         onClose={() => setSearchOpen(false)}
-        onSelect={(id) => setSelectedDemandId(id)}
+        onSelectDemand={(id) => setSelectedDemandId(id)}
+        onSelectClient={(id) => setSelectedClientId(id)}
       />
 
       <ClientsAdmin
@@ -715,43 +807,70 @@ export function DashboardScreen() {
         onClose={() => setPerformancePanelOpen(false)}
       />
 
+      <SettingsPanel
+        open={settingsOpen}
+        isAdmin={isAdmin}
+        onClose={() => setSettingsOpen(false)}
+        onOpen={handleOpenSettingsItem}
+      />
+
       <OnboardingTour />
     </div>
   );
 }
 
+type ViewMode = "list" | "kanban" | "clients";
+
 function ViewToggle({
   mode,
   onChange,
 }: {
-  mode: "list" | "kanban";
-  onChange: (m: "list" | "kanban") => void;
+  mode: ViewMode;
+  onChange: (m: ViewMode) => void;
 }) {
   return (
     <div className="flex overflow-hidden rounded-md border border-tng-marine-600">
-      <button
-        type="button"
-        onClick={() => onChange("list")}
-        className={`px-2.5 py-1 text-[11px] transition ${
-          mode === "list"
-            ? "bg-tng-marine-600 text-tng-marine-50"
-            : "text-tng-marine-300 hover:bg-tng-marine-700/60 hover:text-tng-marine-100"
-        }`}
-      >
+      <ViewToggleButton active={mode === "list"} onClick={() => onChange("list")}>
         Lista
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange("kanban")}
-        className={`px-2.5 py-1 text-[11px] transition ${
-          mode === "kanban"
-            ? "bg-tng-marine-600 text-tng-marine-50"
-            : "text-tng-marine-300 hover:bg-tng-marine-700/60 hover:text-tng-marine-100"
-        }`}
-      >
+      </ViewToggleButton>
+      <ViewToggleButton active={mode === "kanban"} onClick={() => onChange("kanban")}>
         Kanban
-      </button>
+      </ViewToggleButton>
+      <ViewToggleButton
+        active={mode === "clients"}
+        onClick={() => onChange("clients")}
+        title="Visualizar por cliente"
+      >
+        Por cliente
+      </ViewToggleButton>
     </div>
+  );
+}
+
+function ViewToggleButton({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`px-2.5 py-1 text-[11px] transition ${
+        active
+          ? "bg-tng-marine-600 text-tng-marine-50"
+          : "text-tng-marine-300 hover:bg-tng-marine-700/60 hover:text-tng-marine-100"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

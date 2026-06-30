@@ -171,6 +171,60 @@ export async function listDemands(
   return { data: (data as Demand[]) ?? [], error: null };
 }
 
+/**
+ * Lista as demandas de um cliente específico, mais recentes em cima.
+ * Usado no `ClientDetailDrawer` (Sprint 20) — sem limite porque a
+ * cardinalidade por cliente é baixa.
+ */
+export async function listDemandsByClient(
+  clientId: string,
+): Promise<{ data: Demand[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from("demands")
+    .select("*")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[demands] listByClient failed:", error);
+    return { data: [], error: error.message };
+  }
+  return { data: (data as Demand[]) ?? [], error: null };
+}
+
+export type ClientDemandCount = { open: number; total: number };
+
+/**
+ * Agrega contagens por client_id em uma única query: total e "abertas"
+ * (status `todo` ou `doing`). Usado pelos cards do painel "Por cliente"
+ * pra mostrar "N abertas · M totais" sem buscar todas as demandas.
+ */
+export async function listClientDemandCounts(): Promise<{
+  data: Record<string, ClientDemandCount>;
+  error: string | null;
+}> {
+  const { data, error } = await supabase
+    .from("demands")
+    .select("client_id, status")
+    .not("client_id", "is", null);
+
+  if (error) {
+    console.error("[demands] listClientDemandCounts failed:", error);
+    return { data: {}, error: error.message };
+  }
+
+  const out: Record<string, ClientDemandCount> = {};
+  for (const row of (data ?? []) as Array<{
+    client_id: string;
+    status: Demand["status"];
+  }>) {
+    const entry = (out[row.client_id] ||= { open: 0, total: 0 });
+    entry.total += 1;
+    if (row.status === "todo" || row.status === "doing") entry.open += 1;
+  }
+  return { data: out, error: null };
+}
+
 export type DemandChange = {
   new: Demand | null;
   old: Demand | null;
