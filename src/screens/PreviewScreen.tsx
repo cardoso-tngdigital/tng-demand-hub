@@ -62,8 +62,15 @@ export function PreviewScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [view, setView] = useState<ViewState>(INITIAL_VIEW);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Espelha o bundle atual pra goPrev/goNext lerem o tamanho da lista sem
+  // depender de closure (mantém os callbacks estáveis) — ver comentário neles.
+  const bundleRef = useRef<PreviewPayload | null>(null);
 
   const current = bundle && bundle.items[currentIndex] ? bundle.items[currentIndex] : null;
+
+  useEffect(() => {
+    bundleRef.current = bundle;
+  }, [bundle]);
 
   const hide = useCallback(async () => {
     // Limpa o bundle ANTES de destruir pra desmontar qualquer <video>
@@ -82,22 +89,24 @@ export function PreviewScreen() {
     }
   }, []);
 
+  // IMPORTANTE: NÃO enfiar `setCurrentIndex` dentro de um updater de
+  // `setBundle`. O StrictMode (dev) invoca updaters 2× pra checar pureza, e
+  // como aquilo tinha efeito colateral (setCurrentIndex), o índice andava
+  // 2 de 2 (bug reportado 2026-07-10). Aqui lemos o tamanho do ref e
+  // chamamos setCurrentIndex UMA vez — o updater dele é puro, então o
+  // double-invoke do StrictMode é inofensivo.
   const goPrev = useCallback(() => {
-    setBundle((b) => {
-      if (!b || b.items.length <= 1) return b;
-      setCurrentIndex((i) => (i - 1 + b.items.length) % b.items.length);
-      setView(INITIAL_VIEW);
-      return b;
-    });
+    const b = bundleRef.current;
+    if (!b || b.items.length <= 1) return;
+    setCurrentIndex((i) => (i - 1 + b.items.length) % b.items.length);
+    setView(INITIAL_VIEW);
   }, []);
 
   const goNext = useCallback(() => {
-    setBundle((b) => {
-      if (!b || b.items.length <= 1) return b;
-      setCurrentIndex((i) => (i + 1) % b.items.length);
-      setView(INITIAL_VIEW);
-      return b;
-    });
+    const b = bundleRef.current;
+    if (!b || b.items.length <= 1) return;
+    setCurrentIndex((i) => (i + 1) % b.items.length);
+    setView(INITIAL_VIEW);
   }, []);
 
   useEffect(() => {
