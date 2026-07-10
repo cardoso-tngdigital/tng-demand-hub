@@ -81,6 +81,20 @@ sprints do Blog. Pedido do usuário.
   Também: CSP `frame-src` ganhou `https://*.supabase.co` pra o PDF renderizar
   no `<iframe>` (antes só `'self' blob:` — bloqueava). Refatorou o fluxo
   compartilhado Mac+Windows: **testar nos dois** após atualizar.
+- ✅ 🐛 **Navegação de anexos pulando de 2 em 2 (setas) — 2026-07-10.**
+  Abrir 1/10 e apertar → ia pra 3/10, 5/10… Causa: `goPrev`/`goNext`
+  enfiavam `setCurrentIndex` DENTRO do updater de `setBundle`, que é impuro.
+  O React StrictMode (dev) invoca updaters 2× pra detectar impureza →
+  o `setCurrentIndex` era enfileirado duas vezes → índice andava 2. Sintoma
+  só do dev (no release empacotado andava 1), mas é bug real. Fix: ler o
+  tamanho da lista de um `bundleRef` e chamar `setCurrentIndex` UMA vez
+  (updater puro; o double-invoke passa a ser inofensivo). `PreviewScreen.tsx`.
+- ✅ ✨ **Release v0.2.1 publicado — 2026-07-10.** Tag `v0.2.1` → build Mac
+  (aarch64+x64) + Windows via GitHub Actions, com todos os fixes acima
+  (devtools no Windows, preview reescrito, setas 1-a-1, PDF via CSP).
+  Versão bumpada em package.json + tauri.conf.json + Cargo.toml. Validado em
+  dev no Mac antes de subir (preview abre, setas andam 1-a-1); Windows a
+  validar no app instalado.
 
 ---
 
