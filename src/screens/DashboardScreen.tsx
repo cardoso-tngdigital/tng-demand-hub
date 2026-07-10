@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useAuth } from "../hooks/useAuth";
+import { BlogPanel } from "../components/blog/BlogPanel";
+import { setBlogPort } from "../lib/blogClient";
 import {
   listDemands,
   subscribeToDemands,
@@ -125,6 +128,45 @@ export function DashboardScreen() {
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [performancePanelOpen, setPerformancePanelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Painel Blog (Sprint 27): sidecar Node sobe on-demand na 1ª abertura.
+  // `blogStarting` cobre o gap entre invoke e o health responder pra evitar
+  // que o user clique no botão duas vezes.
+  const [blogOpen, setBlogOpen] = useState(false);
+  const [blogStarting, setBlogStarting] = useState(false);
+
+  const handleOpenBlog = useCallback(async () => {
+    if (blogOpen) return;
+    setBlogStarting(true);
+    try {
+      const status = await invoke<{ running: boolean; port: number }>(
+        "blog_sidecar_start_lazy",
+        {
+          args: {
+            supabase_url: import.meta.env.VITE_SUPABASE_URL,
+            supabase_anon_key: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+        },
+      );
+      setBlogPort(status.port);
+      // Sidecar demora ~1s pra ligar depois do fork; espera o /api/health
+      // responder antes de mostrar o painel pra não bater em rota morta.
+      for (let i = 0; i < 20; i++) {
+        try {
+          const r = await fetch(`http://127.0.0.1:${status.port}/api/health`);
+          if (r.ok) break;
+        } catch {
+          // Sidecar ainda não subiu — tenta de novo.
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      setBlogOpen(true);
+    } catch (err) {
+      console.error("[blog] Falha ao iniciar sidecar:", err);
+      window.alert("Não consegui iniciar o motor do Blog. Detalhes no console.");
+    } finally {
+      setBlogStarting(false);
+    }
+  }, [blogOpen]);
 
   // Sprint 20: o header consolidado abre o SettingsPanel; clicar num cartão
   // de lá chama esta função, que aciona o setter individual do admin
@@ -600,6 +642,19 @@ export function DashboardScreen() {
           </button>
           <button
             type="button"
+            onClick={handleOpenBlog}
+            disabled={blogStarting}
+            className="rounded-md px-3 py-1.5 text-sm text-tng-marine-200 transition hover:bg-tng-marine-700 hover:text-tng-orange-300 disabled:opacity-50"
+            aria-label="Abrir Blog"
+          >
+            <i
+              className={`fa-solid ${blogStarting ? "fa-spinner fa-spin" : "fa-newspaper"} mr-1.5`}
+              aria-hidden="true"
+            />
+            Blog
+          </button>
+          <button
+            type="button"
             onClick={() => setSettingsOpen(true)}
             className="rounded-md p-1 text-tng-marine-300 transition hover:bg-tng-marine-700/60 hover:text-tng-orange-400"
             title="Configurações"
@@ -813,6 +868,8 @@ export function DashboardScreen() {
         onClose={() => setSettingsOpen(false)}
         onOpen={handleOpenSettingsItem}
       />
+
+      <BlogPanel open={blogOpen} onClose={() => setBlogOpen(false)} />
 
       <OnboardingTour />
     </div>

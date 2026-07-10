@@ -24,6 +24,32 @@ function App() {
   const [windowLabel, setWindowLabel] = useState<string>("main");
   const [bootError, setBootError] = useState<string | null>(null);
 
+  // Atalho pra abrir o inspetor/console em QUALQUER janela (main, capture,
+  // preview) — inclusive no app empacotado (a feature `devtools` no
+  // Cargo.toml habilita em release). Serve pra depurar bugs que só aparecem
+  // fora do modo dev, como anexos não abrindo no Windows. F12 ou
+  // Ctrl+Shift+I / Cmd+Alt+I. 2026-07-10.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const combo =
+        e.key === "F12" ||
+        ((e.ctrlKey || e.metaKey) &&
+          e.shiftKey &&
+          (e.key === "I" || e.key === "i")) ||
+        (e.metaKey && e.altKey && (e.key === "I" || e.key === "i"));
+      if (combo) {
+        e.preventDefault();
+        void import("@tauri-apps/api/core").then(({ invoke }) =>
+          invoke("open_devtools").catch((err) =>
+            console.error("[devtools] falha ao abrir:", err),
+          ),
+        );
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {

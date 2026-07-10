@@ -374,20 +374,89 @@ export async function getSignedUrl(filePath: string, expiresInSeconds = 3600): P
   return data.signedUrl;
 }
 
-/** Lista os anexos de uma demanda em ordem de upload. */
+/**
+ * Lista os anexos de uma demanda na ordem manual (`sort_order`), com o
+ * `created_at` como desempate/fallback pros que ainda não foram posicionados.
+ *
+ * Defensivo: se a coluna `sort_order` ainda não existir (migration
+ * 20260710000001 não aplicada), refaz a query só por `created_at` — o app
+ * continua funcionando, só sem a ordenação manual até a migration entrar.
+ */
 export async function listAttachments(
   demandId: string,
 ): Promise<{ data: Attachment[]; error: string | null }> {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("attachments")
     .select("*")
     .eq("demand_id", demandId)
+    .order("sort_order", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
+
+  if (error && /sort_order/i.test(error.message)) {
+    // Coluna ainda não existe — fallback pra ordem de upload.
+    ({ data, error } = await supabase
+      .from("attachments")
+      .select("*")
+      .eq("demand_id", demandId)
+      .order("created_at", { ascending: true }));
+  }
+
   if (error) {
     console.error("[attachments] list failed:", error);
     return { data: [], error: error.message };
   }
   return { data: (data as Attachment[]) ?? [], error: null };
+}
+
+/**
+ * Remove um anexo: apaga o registro (RLS: só quem enviou ou admin) e depois
+ * o objeto no Storage (best-effort). Apaga o registro primeiro porque é ele
+ * que a UI enxerga; um objeto órfão no bucket é inofensivo. Se a RLS bloquear
+ * (0 linhas), devolve mensagem clara em vez de fingir sucesso.
+ */
+export async function deleteAttachment(
+  attachment: Attachment,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { data, error } = await supabase
+    .from("attachments")
+    .delete()
+    .eq("id", attachment.id)
+    .select("id");
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      error: "Sem permissão para excluir (só quem enviou o anexo ou um admin).",
+    };
+  }
+  // Storage best-effort — não bloqueia o sucesso do delete lógico.
+  await supabase.storage
+    .from("attachments")
+    .remove([attachment.file_path])
+    .catch(() => {});
+  return { ok: true };
+}
+
+/**
+ * Persiste a nova ordem dos anexos de uma demanda via RPC atômico
+ * (`reorder_attachments`). `orderedIds` é a lista completa de ids na ordem
+ * desejada; o RPC grava 0,1,2,… em `sort_order`.
+ */
+export async function reorderAttachments(
+  demandId: string,
+  orderedIds: string[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabase.rpc("reorder_attachments", {
+    p_demand_id: demandId,
+    p_ordered_ids: orderedIds,
+  });
+  if (error) {
+    console.error("[attachments] reorder failed:", error);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
 }
 
 export function formatBytes(bytes: number): string {

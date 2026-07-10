@@ -1,0 +1,50 @@
+# =============================================================================
+# blog-backend — .gitignore
+# NUNCA commitar credenciais, tokens ou artefatos de build.
+# =============================================================================
+
+# Dependências
+node_modules/
+bun.lockb
+
+# Builds
+dist/
+build/
+*.tsbuildinfo
+
+# Binários compilados do sidecar (vão via GitHub Actions, não no repo)
+tng-blog-sidecar
+tng-blog-sidecar.exe
+tng-blog-sidecar-*
+
+# Artefatos temporários do `bun build --compile` (63MB cada; vazam quando o
+# compile é interrompido). Nunca commitar.
+*.bun-build
+
+# Sharp + deps copiadas ao lado do binário pelo `bun run vendor:sharp`
+sidecar-vendor/
+
+# Variáveis de ambiente com segredos
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# Dados locais e credenciais persistidas
+data/
+!data/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Test artifacts
+coverage/
+.nyc_output/

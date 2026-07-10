@@ -110,25 +110,45 @@ export async function openAttachmentPreview(
 
   const payload: PreviewPayload = { items, currentIndex };
 
+  // Logs por etapa — sem devtools em release não dava pra ver onde o fluxo
+  // parava (bug "anexos não abrem no Windows", 2026-07-10). Com a feature
+  // devtools ligada + F12, esses logs mostram exatamente o ponto de falha.
   try {
+    console.log("[preview] abrindo. itens:", items.length, "index:", currentIndex);
     let win = await WebviewWindow.getByLabel(WINDOW_LABEL);
+    console.log("[preview] janela existente?", win !== null);
     if (!win) {
       // Cria a janela on-demand e espera o React lá dentro montar antes
       // de emitir — senão o evento é entregue antes do listener existir
       // e o payload se perde.
+      console.log("[preview] criando janela via ensure_preview_window_cmd…");
       await invoke("ensure_preview_window_cmd");
+      console.log("[preview] aguardando preview:ready (timeout 4s)…");
       await waitForPreviewReady(READY_TIMEOUT_MS);
       win = await WebviewWindow.getByLabel(WINDOW_LABEL);
+      console.log("[preview] após ready, janela achada?", win !== null);
     }
 
+    console.log("[preview] emitindo preview:open…");
     await emitTo(WINDOW_LABEL, "preview:open", payload);
 
     if (win) {
+      console.log("[preview] show + setFocus…");
       await win.show();
       await win.setFocus();
+      console.log("[preview] concluído com sucesso.");
+    } else {
+      // Janela nunca ficou disponível — reporta como falha em vez de fingir OK.
+      console.error("[preview] janela 'preview' indisponível após criação.");
+      return {
+        ok: false,
+        error:
+          "A janela de pré-visualização não abriu. Tente de novo; se persistir, abra o console (F12) e me mande o erro.",
+      };
     }
     return { ok: true };
   } catch (err) {
+    console.error("[preview] falhou:", err);
     return {
       ok: false,
       error: err instanceof Error ? err.message : String(err),

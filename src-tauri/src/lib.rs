@@ -27,6 +27,11 @@ use tauri::{
     Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 
+mod blog_sidecar;
+use blog_sidecar::{
+    blog_sidecar_start_lazy, blog_sidecar_status, kill_sidecar, BlogSidecarState,
+};
+
 // ---------------------------------------------------------------------------
 // Estado global do detector de dupla pressão
 // ---------------------------------------------------------------------------
@@ -180,6 +185,26 @@ fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
     Err(last_error
         .map(|e| e.to_string())
         .unwrap_or_else(|| "Falha desconhecida ao ler arquivo".to_string()))
+}
+
+// Abre o inspetor (devtools/console) da janela que chamou. Habilitado em
+// release pela feature `devtools` no Cargo.toml. O frontend chama isto via
+// atalho (F12 / Ctrl+Shift+I) pra permitir depurar bugs no app empacotado.
+#[tauri::command]
+fn open_devtools(window: tauri::WebviewWindow) {
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    window.open_devtools();
+    #[cfg(not(any(debug_assertions, feature = "devtools")))]
+    let _ = window;
+}
+
+// Grava bytes num arquivo escolhido pelo usuário (via dialog save do JS).
+// Necessário porque o WKWebView do macOS ignora silenciosamente cliques em
+// `<a download href="blob:...">` — não há handler de download no webview.
+// Usado pelo painel Blog pra salvar o .docx do artigo (2026-07-09).
+#[tauri::command]
+fn write_file_bytes(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, bytes).map_err(|err| format!("{} ({})", err, path))
 }
 
 // Modo COMBO. Frontend chama no boot e sempre que o user muda. Ao ativar
@@ -478,14 +503,20 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .manage(BlogSidecarState::new())
         .invoke_handler(tauri::generate_handler![
             hide_capture_window,
             set_tray_badge,
             read_file_bytes,
+            write_file_bytes,
+            open_devtools,
             set_capture_hotkey,
             set_capture_double_tap,
             ensure_capture_window_cmd,
             ensure_preview_window_cmd,
+            blog_sidecar_start_lazy,
+            blog_sidecar_status,
         ]);
 
     // Single-instance: garante que clicar no atalho da taskbar/Dock
@@ -584,6 +615,16 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // No shutdown, mata o sidecar do Blog antes de encerrar. Sem isso,
+            // sobra um processo `tng-blog-sidecar` órfão no Activity Monitor
+            // / Task Manager depois do usuário fechar o app.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(state) = app_handle.try_state::<BlogSidecarState>() {
+                    kill_sidecar(&state);
+                }
+            }
+        });
 }

@@ -145,6 +145,9 @@ export interface Attachment {
   file_size_bytes: number;
   uploaded_by: string | null;
   created_at: string;
+  /** Ordem manual (drag-and-drop). null = não posicionado — cai pro created_at.
+   *  Opcional pra compat com clientes anteriores à migration 20260710000001. */
+  sort_order?: number | null;
 }
 
 export interface Comment {

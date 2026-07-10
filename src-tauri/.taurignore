@@ -1,0 +1,15 @@
+# =============================================================================
+# .taurignore — arquivos/pastas que o watcher do `tauri dev` deve IGNORAR.
+# Mesma sintaxe do .gitignore. Só afeta o modo dev (em release não há watcher).
+# =============================================================================
+# Motivo: o sidecar do Blog grava dados em runtime dentro de `src-tauri/data/`
+# (imagens baixadas do Magnific, magnific_token.json, settings.json). Sem esta
+# regra, cada imagem baixada durante o pipeline disparava um rebuild+restart do
+# app inteiro — o app ficava "abrindo e fechando" e matava o pipeline no meio.
+# Bug reportado em 2026-07-08.
+data/
+
+# Segredos locais do sidecar em dev (ver src-tauri/.gitignore). Não muda em
+# runtime, mas fica aqui por garantia.
+.env
+.env.local

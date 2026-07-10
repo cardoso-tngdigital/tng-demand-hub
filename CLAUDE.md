@@ -18,6 +18,49 @@ Use `Cmd+F` (`Ctrl+F`) com 🐛 ou ✨ pra navegar.
 
 ---
 
+## App principal — devtools + anexos — 2026-07-10
+
+Primeira leva de mudanças no **app principal** (fora do módulo Blog) desde as
+sprints do Blog. Pedido do usuário.
+
+- ✅ ✨ **Devtools/console habilitado em RELEASE — 2026-07-10.**
+  Sem isso, o inspetor só existia em `tauri dev` — impossível depurar bug que
+  só aparece no app empacotado (ex.: anexos no Windows). Mudanças:
+  `src-tauri/Cargo.toml` ganhou a feature `devtools` no `tauri`; `lib.rs`
+  ganhou o comando `open_devtools` (`window.open_devtools()`, gated por
+  `cfg(any(debug_assertions, feature="devtools"))`); `App.tsx` registra um
+  listener de teclado (F12 / Ctrl+Shift+I / Cmd+Alt+I) que invoca o comando —
+  vale pra QUALQUER janela (main/capture/preview), porque App é a raiz das três.
+- ✅ 🐛 **Anexos não abrem no Windows — instrumentado (diagnóstico) — 2026-07-10.**
+  Sintoma: clica no anexo e nada acontece, sem erro. O fluxo abre a janela
+  `preview` on-demand (`lib/preview.ts` → `ensure_preview_window_cmd` + emit
+  `preview:open`). Causa exata ainda desconhecida (só reproduz no Windows
+  empacotado). Ações: (1) devtools habilitado (acima) pra capturar o erro
+  real; (2) `openAttachmentPreview` ganhou logs por etapa (janela achada?
+  ready? emit? show?) e agora RETORNA erro visível se a janela não abrir, em
+  vez de fingir sucesso (`ok:true`). **Próximo passo depende do console do
+  usuário no Windows** — o fix real virá com o erro em mãos.
+- ✅ ✨ **Excluir anexo (lixeira no canto) — 2026-07-10.**
+  `deleteAttachment()` em `lib/attachments.ts` (delete do registro + remove do
+  Storage best-effort; se a RLS bloquear devolve msg clara "só quem enviou ou
+  admin"). UI: ícone de lixeira no canto superior direito de cada anexo, com
+  confirmação inline em 2 cliques (vira ícone de alerta, desarma em 4s).
+- ✅ ✨ **Reordenar anexos com drag-and-drop (persistente) — 2026-07-10.**
+  Migration `20260710000001_attachments_reorder.sql`: coluna `sort_order`,
+  índice `(demand_id, sort_order nulls last, created_at)`, policy de UPDATE
+  pra membros ativos (antes não havia — reorder era negado por RLS), e RPC
+  atômico `reorder_attachments(demand_id, ordered_ids[])` (`security invoker`,
+  respeita RLS). `listAttachments` ordena por `sort_order` (nulls last) +
+  `created_at`, com **fallback defensivo**: se a coluna não existir ainda
+  (migration não aplicada), refaz só por `created_at` — app não quebra.
+  `reorderAttachments()` chama o RPC. UI: cada anexo é `draggable` (com >1
+  item), grip visual à esquerda, drop reordena otimista + persiste; se
+  persistir falhar, recarrega do banco. ⚠️ **Precisa aplicar a migration**
+  (`supabase db push` ou dashboard) — sem ela o reorder não persiste (o resto
+  funciona via fallback).
+
+---
+
 ## Visão geral
 
 **TNG Demand Hub** é um aplicativo desktop interno da TNG Digital para gerenciamento de demandas com captura rápida via atalho global e processamento por IA (Gemini 2.0 Flash). O fluxo é: hotkey → janela flutuante → captura multimodal → IA extrai campos → dashboard sincronizado em tempo real.
@@ -1259,6 +1302,1083 @@ Quando reativar:
 - Coleta de feedback estruturada
 - Correção de bugs do uso real
 - Documentação de uso interna
+
+---
+
+# ⚡ Migração do Blog (Sprints 21–29) — v0.2.0
+
+> **Trilha separada.** As sprints desta seção correm em paralelo às sprints do
+> app principal e **não modificam nenhuma funcionalidade existente do TNG
+> Demand Hub**. A única alteração no app principal é o botão "Blog" no header
+> (`DashboardScreen.tsx`) e a configuração do sidecar em `tauri.conf.json` +
+> `src-tauri/src/lib.rs` + `capabilities/default.json`. Tudo o resto vive
+> isolado em `blog-backend/`.
+>
+> **Contexto:** o app Python original em `../Blog - TNG Digital/` (fora do
+> repo) funciona muito bem, mas o cliente MCP do Magnific exige WSL no
+> Windows (RNF-14 do PRD do Blog). Para distribuir pra equipe Mac+Windows
+> sem WSL, reescrevemos o backend em Node.js/TypeScript com os SDKs oficiais
+> (`@google/genai`, `@modelcontextprotocol/sdk`) que rodam nativos em ambos
+> os SOs. O plugin WordPress v2 continua funcionando sem update em clientes
+> já conectados. O esquema `blog.*` no Supabase permanece intocado (apenas
+> ganha `blog.ai_usage`).
+>
+> **Plano detalhado:** `~/.claude/plans/golden-floating-quill.md`.
+>
+> **Segurança:** nenhuma credencial commitada. `.env.local`, `data/` e
+> binários compilados estão em `blog-backend/.gitignore`. Chaves de API vão
+> como GitHub Actions secrets. Token OAuth do Magnific fica em
+> `data/magnific_token.json` (gitignored). Token do WordPress vive no
+> Supabase (RLS protege). Sem hardcode em nenhum arquivo.
+
+## Sprint 21 — Fundação do backend Node — 2026-07-01
+
+Setup inicial da pasta `blog-backend/` como monorepo dentro do TNG Demand
+Hub, com Bun + Hono + TypeScript strict + dependências dos SDKs oficiais.
+Servidor mínimo rodando com healthcheck, autenticação por token Supabase e
+teste automatizado.
+
+- ✅ ✨ **Estrutura inicial `blog-backend/` — 2026-07-01.** Pastas `src/`,
+  `src/steps/`, `tests/`, `data/`. `.gitignore` bloqueando `.env*`, `data/*`
+  (exceto `.gitkeep`), `dist/`, binários compilados (`tng-blog-sidecar*`) e
+  `node_modules/`. `.env.example` com nomes das variáveis (sem valores).
+  `package.json` com scripts `dev`, `start`, `build:mac`, `build:mac-x64`,
+  `build:win`, `test`, `typecheck` — targets Bun compile pra Mac ARM64,
+  Mac x64 e Windows x64. Deps: `@google/genai`, `@modelcontextprotocol/sdk`,
+  `@supabase/supabase-js`, `hono`, `sharp`, `docx`. `tsconfig.json` em modo
+  strict total. `README.md` da pasta explicando por que existe e como rodar.
+  **Segurança:** nenhum arquivo committado contém segredos; `.env.local`
+  continua fora do git.
+- ✅ ✨ **Bun 1.3.14 instalado — 2026-07-01.** `brew install oven-sh/bun/bun`.
+  Requisito do sidecar (compila o bundle standalone Mac/Windows).
+- ✅ ✨ **`src/env.ts` — 2026-07-01.** Lê `Bun.env`, valida obrigatórias
+  (`SUPABASE_URL`, `SUPABASE_ANON_KEY`), aborta com `process.exit(1)` e
+  mensagem em pt-BR se faltar. `PORT` validado como inteiro 1-65535.
+  Defaults: `GEMINI_MODEL="gemini-2.5-flash"`, `MAGNIFIC_MCP_URL` oficial,
+  `PORT=8000`, `DATA_DIR="./data"`.
+- ✅ ✨ **`src/supabase.ts` — 2026-07-01.** `makeSupabaseForUser(token)` cria
+  cliente com `db: { schema: "blog" }` e sessão do usuário via header
+  `Authorization: Bearer`. `sondarSchema(token)` faz SELECT head barato em
+  `blog.sites` pra confirmar exposição do schema. Type export
+  `BlogSupabaseClient` necessário pra generic `<any, "blog", ...>`.
+- ✅ ✨ **`src/middleware/auth.ts` — 2026-07-01.** Middleware Hono que aceita
+  `X-Supabase-Token` OU `Authorization: Bearer`. Chama `auth.getUser(token)`
+  num client admin dedicado (sem sessão). 401 com msg pt-BR se faltar ou
+  inválido. Salva `user` e `supabase` no `c.set()` pro handler consumir.
+- ✅ ✨ **`src/main.ts` — 2026-07-01.** Servidor Hono. **Binda em
+  `127.0.0.1`** (nunca `0.0.0.0` — sidecar local). Fallback de porta: tenta
+  `PORT`..`PORT+10` em `EADDRINUSE`. CORS restrito a `tauri://localhost`,
+  `http://localhost:1420`, `http://127.0.0.1:1420`. Middleware de log
+  método+path+status+ms. Handler global de erro (500 com `{error, details}`
+  em pt-BR). Rotas: `GET /api/health` (pública) e `GET /api/me` (com auth,
+  retorna `user_id`, `email`, `schema_ok`). Graceful shutdown SIGTERM/SIGINT.
+- ✅ ✨ **`tests/health.test.ts` — 2026-07-01.** Sobe o servidor em processo
+  filho (porta random 39000–39999), faz polling até `/api/health` responder,
+  testa 200 no health e 401 no `/api/me` sem token. **2/2 passa em 272ms.**
+- ✅ ✨ **Verificação — 2026-07-01.** `bun install` OK (172 pacotes, 3.86s).
+  `bun run typecheck` sem output (zero erros). `bun test tests/health.test.ts`
+  → 2 pass, 6 expect() calls, 278ms.
+
+**Follow-ups conhecidos:**
+- `sharp` tem postinstall script bloqueado (`bun pm untrusted`). Liberar
+  antes da Fase 3 (imagens).
+- `@google/genai` instalado em v1.52.0 (pedimos `^1.0.0`). Sem impacto agora.
+- Não rodei o sidecar com token Supabase real ainda — só teste do health.
+  Validação com token real fica pra integração no Tauri (Fase 6).
+
+## Sprint 22 — Módulos puros portados (WordPress + Gemini + publish + docx + links) — 2026-07-01
+
+Fase 2 do plano de migração do Blog: portados 5 módulos "puros" (sem
+dependência do MCP do Magnific) que reproduzem 1:1 o comportamento do
+Python. Nada de rota nova em `main.ts` — a Fase 4 pluga essas peças.
+
+- ✅ ✨ **`src/wordpress.ts` — 2026-07-01.** Cliente REST compartilhado
+  portado de `app/wp_client.py`. `buildAuthHeaders` decide entre token
+  do plugin (novo, header `X-TNG-Blog-Token`) e Application Password
+  (legado, `Authorization: Basic base64(user:pass)`). `wpFetch` é o
+  wrapper de `fetch` com User-Agent de Chrome real (Cloudflare bloqueia
+  UA default — visto no POC do Python), retry automático em 502/503/504
+  (2 retries com backoff 1s/3s) e nunca lança em HTTP != 2xx (devolve
+  `{status, data, error}`). Sobem também: `testarConexao`,
+  `gravarRankMath`, `criarPost`, `uploadMidia`, `atualizarMidia`,
+  `buscarPaginas`, `buscarPosts`. Erros ao usuário sempre em pt-BR;
+  detalhes técnicos ficam em `error.cause`.
+- ✅ ✨ **`src/steps/links.ts` — 2026-07-01.** Descoberta de links
+  internos (2 páginas + 1 post) via WP REST. Preserva a lista
+  `_SLUGS_EVITAR` do Python (`contato`, `privacidade`, `termos`,
+  `checkout`, `cookies`, `lgpd`, etc.). Não força link fraco — se não
+  encontrar candidato relevante, devolve menos. Falha de conexão vira
+  `Error` em pt-BR com `.cause` pro debug.
+- ✅ ✨ **`src/steps/gemini.ts` — 2026-07-01.** Cliente Gemini via SDK
+  `@google/genai` em modo JSON estruturado
+  (`responseMimeType: "application/json"`). Retry 3× com espera de 5s
+  em erros transitórios (503/429/UNAVAILABLE/RESOURCE_EXHAUSTED);
+  fallback pro `gemini-2.5-flash-lite` na última tentativa. Aplica
+  `_LIMITE_TITULO=100` e `_LIMITE_RANKMATH=300` cortando só em borda
+  de palavra (nunca no meio). Slug determinístico via `_normalizarSlug`
+  (NFD + strip acento + `[^a-z0-9]+` → `-` + trim). Log seguro (nunca
+  vaza API key nem prompt inteiro; só primeiros 100 chars). Helpers
+  `_normalizarSlug` e `_limitarBordaPalavra` exportadas pra teste.
+- ✅ ✨ **`src/steps/publish.ts` — 2026-07-01.** Publicação no WP
+  respeitando RNF-06 (nada pela metade): sobe todas as mídias ANTES de
+  criar o post. 1ª imagem vira `featured_media`, demais entram como
+  `<figure>` antes do 2º, 3º… `<h2>` (pulando o 1º — mesmo algoritmo
+  do Python, `_inserirImagensNoCorpo`). `_resolverStatus` decide entre
+  `publish` / `draft` / `future` (com `date_gmt` em UTC). RankMath é
+  best-effort — se falhar, marca `rankmath_ok: false` mas não derruba
+  a publicação. Devolve `{post_id, post_url, slug, rankmath_ok}`.
+- ✅ ✨ **`src/steps/docx.ts` — 2026-07-01.** Geração do .docx do
+  artigo pra aprovação do cliente. Parser HTML minimalista próprio
+  (sem dep extra) traduz `<h1>`–`<h6>` pra `HeadingLevel`, `<p>` pra
+  parágrafo, `<ul>/<ol>/<li>` pra listas bullet/numbered, `<strong>/<b>`
+  pra bold, `<em>/<i>` pra italics, `<a>` pra `ExternalHyperlink`.
+  `<figure>/<img>` são ignorados (docx é só do texto). Retorna
+  `Uint8Array` (bytes começam com `PK`, magic do container zip).
+- ✅ ✨ **Testes automatizados — 2026-07-01.** 4 arquivos novos,
+  todos passando: `tests/gemini.test.ts` (10 casos, cobrindo slug e
+  corte em borda de palavra em vários cenários incluindo string sem
+  espaço); `tests/wordpress.test.ts` (7 casos, com fake WP via
+  `Bun.serve` em porta random — auth headers com token/basic/ambos,
+  `testarConexao` caminho feliz e 401, `wpFetch` retry em 503 até 200,
+  não-retry em 404); `tests/links.test.ts` (3 casos, com WP mockado —
+  caminho feliz 2 pages + 1 post relevantes, pular slugs fracos
+  incluindo `sobre` que entrou na lista, zero candidatos → `[]`);
+  `tests/docx.test.ts` (3 casos — magic `PK`, HTML vazio, ignora
+  `<figure>`). Total geral: **25 pass, 0 fail, 66 expect() em 4.5s**.
+
+**Divergência intencional vs Python (`_SLUGS_EVITAR`):** o Python tem
+14 palavras na lista; o TS mantém as 14 do original e acrescenta
+`sobre` conforme instrução explícita do briefing da Fase 2 (a lista
+requerida pelo enunciado incluía `sobre`, ausente na lista original
+do Python). Se a intenção era só copiar 1:1 sem `sobre`, é trivial
+remover.
+
+**Divergência intencional (WPListItem):** `descobrirLinks` agora
+devolve `LinkInterno { url, title, tipo }` em vez de `list[str]` como
+no Python — a tipagem existente do Python era `list[str]` mas a Fase 4
+(que vai plugar isso ao Gemini/pipeline) vai precisar do title e do
+tipo pra construir prompts melhores. Consumidor pode simplesmente
+usar `.url` pra manter o contrato antigo.
+
+**Follow-ups conhecidos:**
+- `wordpress.ts` não implementa a atualização de `alt_text` via
+  chamada separada dentro do `uploadMidia` — o `publicarPost` faz
+  isso via `atualizarMidia`. Mesmo comportamento externo do Python
+  (que também fazia POST separado em `/wp-json/wp/v2/media/{id}`).
+- Nada foi plugado ao `main.ts`. Rotas `/api/artigos`, `/api/sites`,
+  `/api/historico/{id}/docx` etc. entram na Fase 4.
+- Sem teste com Gemini real ainda (o briefing sugeriu
+  `tests/manual/gemini-compare.ts` como opcional — não implementei
+  nesta fase pra não travar; a validação lado-a-lado fica pra Fase 4
+  quando a rota estiver ligada).
+
+## Sprint 23 — MCP do Magnific em TypeScript (Fase 3 da migração) — 2026-07-01
+
+Fase mais crítica da migração do Blog: portar o cliente MCP do Magnific de
+Python pra TypeScript, resolvendo o RNF-14 (Windows exigia WSL). O SDK
+oficial `@modelcontextprotocol/sdk` da Anthropic roda nativo em Mac e
+Windows. Nada foi plugado ao `main.ts` — Fase 4 conecta ao pipeline.
+
+- ✅ ✨ **`src/magnific/tokenStorage.ts` — 2026-07-01.** `FileTokenStorage`
+  persiste `access_token`/`refresh_token`/`client_info`/`code_verifier` em
+  `data/magnific_token.json` **no MESMO formato do Python** (`_FileTokenStorage`
+  em `app/magnific_client.py`). Payload tem `tokens` + `client_info` no root.
+  Compatibilidade preservada: operador que já tem token do app Python NÃO
+  precisa reautorizar no sidecar TypeScript. Escrita atômica (`.tmp` + rename),
+  permissão 0600 nos Unix (best-effort no Windows). `load` de arquivo
+  ausente ou JSON inválido devolve `null` (não lança) e loga warn.
+- ✅ ✨ **`src/magnific/oauth.ts` — 2026-07-01.** Implementação custom da
+  interface `OAuthClientProvider` do SDK MCP: expõe `clientMetadata`,
+  `clientInformation()`, `saveClientInformation()`, `tokens()/saveTokens()`,
+  `codeVerifier()/saveCodeVerifier()` e `redirectToAuthorization()`. Callback
+  local: `esperarCallback()` sobe `Bun.serve` em `127.0.0.1:8765/callback`
+  (porta hardcoded no Magnific), captura `code`+`state`, devolve HTML de
+  confirmação pt-BR, derruba o server. Timeout de 5 min com erro tipado
+  (`OAuthTimeoutError`). Porta ocupada vira `CallbackPortInUseError`.
+  `openBrowser()` cross-platform: `open`/`cmd /c start`/`xdg-open`.
+- ✅ ✨ **`src/magnific/client.ts` — 2026-07-01.** `MagnificClient` de alto
+  nível: `ensureAuth()` conecta reutilizando token (nada de browser na 2ª
+  vez); em `UnauthorizedError` aguarda callback → `transport.finishAuth(code)`
+  → reconecta. `_callTool` faz retry 2× (1s, 3s) em erros transitórios, mas
+  NÃO retry em auth (fecha sessão, lança `MagnificAuthRequiredError` pra
+  quem chamou). `_parsearConteudo` réplica do Python: (1) blocos JSON puros;
+  (2) descarta `<system_reminder>…</system_reminder>`; (3) recorta `{…}` como
+  último recurso. API: `listTools`, `accountBalance`, `stockSearch`,
+  `stockDownload`, `imagesGenerate`, `creationsWait`, `close`. Logs sempre
+  pt-BR e só primeiros 8 chars do token + `…`.
+- ✅ ✨ **`src/steps/images.ts` — 2026-07-01.** Portada 1:1 de `steps/images.py`:
+  banco primeiro (`stockSearch` + `stockDownload`, ~1 crédito), IA no que
+  faltar (`imagesGenerate` + `creationsWait`, ~50 créditos). Otimização com
+  `sharp`: `rotate()` (EXIF) → `resize({width:1200, withoutEnlargement:true})`
+  → `webp({quality:85})`. Retorna array de `{buffer:ArrayBuffer, filename,
+  alt, caption?}` — publicador da Fase 4 sobe direto sem re-ler do disco.
+  Escreve tmp em `data/imagens/${jobId}/` só pra debug e **apaga a pasta ao
+  fim** (sucesso ou falha, via `try/finally`).
+- ✅ ✨ **Testes — 2026-07-01.** `tests/magnific-token-storage.test.ts` (6
+  casos: roundtrip com formato Python; `getTokens/setTokens` preservam
+  `client_info`; `clear` remove; arquivo ausente → `null`; JSON inválido →
+  `null` sem lançar; `clear` idempotente). `tests/images-sharp.test.ts` (4
+  casos: PNG 2000x2000 → WebP 1200 com magic `RIFF….WEBP`; imagem 800x600
+  não é ampliada; retrato 1200x2000 preserva largura; WebP menor que 2× o
+  PNG). Nada de rede/MCP real — sem credencial viva. Smoke manual em
+  `tests/manual/magnific-smoke.ts` (rodar com `bun run tests/manual/magnific-smoke.ts`;
+  abre browser 1x, imprime saldo e busca "marketing digital"). Suíte
+  completa: **35 pass, 0 fail, 90 expect() em 4.77s**.
+
+**Como o OAuth do SDK MCP TypeScript funciona:**
+`OAuthClientProvider` é uma **interface** (não classe base). Implementamos
+todos os métodos: `redirectUrl`, `clientMetadata`, `clientInformation()`,
+`saveClientInformation()`, `tokens()`, `saveTokens()`, `codeVerifier()`,
+`saveCodeVerifier()`, `redirectToAuthorization()`, `invalidateCredentials()`.
+O `StreamableHTTPClientTransport` recebe o provider e orquestra: (1) usa
+tokens salvos; (2) em 401, chama `provider.redirectToAuthorization(url)` e
+lança `UnauthorizedError`; (3) o consumidor pega o `code` do callback e
+chama `transport.finishAuth(code)`, que troca `code` por tokens via
+`exchangeAuthorization` (PKCE). O SDK usa `zod v4` internamente, sem
+`openid-client` ou lib externa — tudo do próprio SDK.
+
+**Compatibilidade com o Python:** o formato do token file preserva as
+chaves `tokens` e `client_info` no root — se o operador já tem o app
+Python instalado com `data/magnific_token.json`, o sidecar TypeScript
+usa esse arquivo sem re-login. Testei o roundtrip do `FileTokenStorage`;
+não testei o parsing de arquivo REAL do Python porque não temos um em
+mãos — mas as chaves e o schema batem 1:1 com `_FileTokenStorage`.
+
+**Riscos residuais (importante ler antes da Fase 4):**
+- **Windows não foi testado ainda.** Fluxo de `openBrowser` (`cmd /c start`)
+  funciona teoricamente mas o browser em ambiente sem GUI (WSL bare, RDP
+  headless) pode não abrir. O sidecar cai no fallback que imprime a URL —
+  operador copia manualmente.
+- **Porta 8765 hardcoded.** Se algo local estiver segurando essa porta,
+  `CallbackPortInUseError` é claro mas o operador precisa liberar. Não
+  temos como usar outra porta (Magnific registrou `localhost:8765` no app
+  OAuth deles).
+- **Discovery state não persistido.** O SDK re-descobre RFC 9728 na cada
+  reconexão. Custo: 1 GET a mais no boot da 1ª chamada. Fica pra otimizar
+  se virar problema.
+- **Nada validado com credencial viva.** O smoke manual precisa rodar pelo
+  operador humano (abre browser no 1º uso). Alguns campos podem ter
+  formatos diferentes na resposta real do `account_balance` ou
+  `stock_search` — o parser é defensivo, mas se algo quebrar, o log em
+  `[magnific]` mostra o payload.
+- **`sharp` não precisou de `bun pm trust`.** No Bun 1.3.14 atual o sharp
+  0.33.5 já vem com libvips prebuilt sem postinstall — testado via WebP
+  encode nos testes. Se em máquina nova (arch diferente) exigir build,
+  rodar `bun pm trust sharp` conforme briefing original.
+
+## Sprint 24 — Pipeline, Scheduler e endpoints REST completos (Fase 4) — 2026-07-01
+
+Plugou os módulos das Fases 1-3 num pipeline determinístico completo, scheduler
+com claim atômico no Supabase, e expôs todas as rotas REST que o React vai
+consumir. O sidecar agora é um servidor HTTP funcional de ponta a ponta —
+falta só integrar no Tauri (Fase 6) e criar a UI (Fase 7).
+
+- ✅ ✨ **`src/pipeline.ts` — 2026-07-01.** Orquestrador determinístico das 5
+  etapas (links → texto → imagens → publicando → historico). Injeção
+  explícita de deps (supabase, magnific) — testável com fakes. Emite
+  `ProgressoPipeline` via callback em cada transição. RNF-06 respeitado:
+  nada pela metade. Falha em qualquer etapa marca `etapa_erro` e retorna
+  `status: "falhou"` com mensagem pt-BR. Se `rascunho:true`, status final
+  é `"rascunho"` (importante pro scheduler não tratar como falha).
+- ✅ ✨ **`src/scheduler.ts` — 2026-07-01.** A cada 60s consulta
+  `blog.agendamentos WHERE status='pendente' AND data_programada<=now()`,
+  faz **claim atômico** via `UPDATE ... WHERE id=eq.X AND status=eq.pendente`
+  (Supabase-JS já usa este filtro; se retornar 0 rows outro sidecar pegou).
+  Roda 1× no boot (catch-up de vencidos). Só sobe se
+  `SUPABASE_SERVICE_ROLE_KEY` existir — sem ela loga warning e retorna
+  stop no-op. Anti-overlap (flag `rodando`) pra não empilhar ticks se o
+  processamento demorar > interval.
+- ✅ ✨ **`src/magnific/singleton.ts` — 2026-07-01.** Instância única do
+  `MagnificClient` compartilhada por rotas e scheduler (a conexão MCP é
+  persistente). Lazy init. `closeMagnific()` no shutdown.
+- ✅ ✨ **`src/routes/sites.ts` — 2026-07-01.** CRUD `GET/PUT/DELETE
+  /api/sites/:id`, `POST /api/sites/:id/testar` (chama `testarConexao` do
+  wordpress.ts + atualiza flags), e **`POST /api/conectar` público** que
+  recebe form auto-submit do plugin WP v2 e faz upsert via service_role
+  (RLS bypass) — página HTML de confirmação com tema TNG marine/orange.
+  Token nunca volta pro cliente (sanitizado nas respostas).
+- ✅ ✨ **`src/routes/historico.ts` — 2026-07-01.** `GET /api/historico?site_id=`,
+  `GET /api/historico/:id/docx` (busca post no WP, gera .docx via `gerarDocxArtigo`,
+  retorna com `Content-Disposition: attachment`), `POST /api/historico/:id/publicar`
+  (rascunho → publish via WP REST + atualiza histórico).
+- ✅ ✨ **`src/routes/config.ts` — 2026-07-01.** `GET/PUT /api/prompt` (arquivo
+  atômico), `GET/PUT /api/config/gemini` (chave nunca volta pro cliente, só
+  flag `api_key_configurada`), `PUT /api/config/gemini/modelo`,
+  `GET /api/config/magnific` (checa existência do `magnific_token.json`),
+  `POST /api/config/magnific/conectar` (dispara `ensureAuth`),
+  `PUT /api/config/magnific/modelo`.
+- ✅ ✨ **`src/routes/artigos.ts` — 2026-07-01.** `POST /api/artigos` — se
+  `modo:"agora"` cria N jobs em memória (Map global) e dispara pipeline em
+  background (sem await); se `modo:"programar"` insere N rows em
+  `blog.agendamentos` espaçadas por `espacamento_dias`.
+  `GET /api/artigos/:job_id` retorna progresso do Map. GC a cada 60s
+  remove jobs concluídos há > 5 min. **`src/routes/agendamentos.ts`** exporta
+  `GET /api/agendamentos?site_id=&status=` e `DELETE /api/agendamentos/:id`
+  (só pendentes).
+- ✅ ✨ **`src/routes/plugin.ts` — 2026-07-01.** `GET /api/plugin/download` —
+  empacota `wp-plugin/tng-blog-connect.php` num .zip mínimo (local file
+  header + central directory + EOCD + CRC-32 manual) sem dep externa.
+  Compatível com o formato que o Python retorna.
+- ✅ ✨ **`src/prompt.ts` + `src/settings.ts` + `prompt_padrao_default.txt` —
+  2026-07-01.** Prompt geral persistido em `${DATA_DIR}/prompt_padrao.txt`,
+  seed embarcado do template Python. Settings em `settings.json` (chmod 0600
+  no Unix): `gemini_api_key`, `gemini_model`, `magnific_modelo_ia`. Nunca
+  loggamos os valores.
+- ✅ ✨ **`src/main.ts` — 2026-07-01.** Adicionadas rotas públicas (`/api/conectar`,
+  `/api/plugin`) ANTES das autenticadas (`/api/sites`, `/api/historico`,
+  `/api/config/*`, `/api/prompt`, `/api/artigos`, `/api/agendamentos`).
+  Scheduler ligado no boot. Shutdown gracioso agora fecha scheduler +
+  Magnific + servidor Hono.
+- ✅ 🐛 **Testes granulares removidos — 2026-07-01.** Removidos `docx`,
+  `gemini`, `images-sharp`, `links`, `magnific-token-storage` e `wordpress`
+  test files a pedido do usuário. Mantido `health.test.ts` (smoke básico)
+  e `tests/manual/magnific-smoke.ts` (validação manual).
+- ✅ ✨ **Verificação — 2026-07-01.** `bun run typecheck` sem output (zero
+  erros). `bun test` → 2 pass, 0 fail, 6 expect() em 615ms.
+
+## Sprint 25 — Bun compile do sidecar + workflow multi-plataforma (Fase 5) — 2026-07-02
+
+Empacotamento do backend TypeScript num binário standalone via `bun build
+--compile`. Mac ARM64 rodou local (health OK, `/api/me` sem token = 401 OK,
+scheduler adverte quando SUPABASE_SERVICE_ROLE_KEY ausente). Windows e
+Mac x64 configurados via GitHub Actions no mesmo workflow do Tauri.
+
+- ✅ ✨ **`package.json` scripts `build:mac`, `build:mac-x64`, `build:win` —
+  2026-07-02.** Cada um roda `bun build --compile --minify --external sharp
+  --external '@img/*' --target=<plataforma> src/main.ts` e em seguida
+  `vendor:sharp`. Binário Mac ARM64 = **62 MB**, vendor ~16 MB, total ~78 MB.
+- ✅ ✨ **`scripts/vendor-sharp.ts` — 2026-07-02.** Copia
+  `node_modules/{sharp,@img,color,detect-libc,semver}` pra
+  `sidecar-vendor/node_modules/`. Cross-platform (usa `fs.cp` do Node, não
+  `cp -r`). Roda em Mac e Windows sem shell shim.
+- ✅ ✨ **Sharp como import dinâmico opcional — 2026-07-02.** `src/steps/images.ts`
+  usa `await import("sharp")` num try/catch (com cache) em vez de `import`
+  estático. Se não achar em runtime, loga warning e devolve a imagem crua
+  (WordPress ainda gera thumbnails próprios). Isso permite o binário Bun
+  compile rodar mesmo se `sidecar-vendor/` não estiver no path — degradação
+  graciosa. No modo dev funciona normal. Fase 6 configura o NODE_PATH pelo
+  Tauri pra ativar o sharp quando o app real for empacotado.
+- ✅ ✨ **`.github/workflows/release.yml` — 2026-07-02.** Adicionados 3 passos
+  antes do `tauri-action`: `oven-sh/setup-bun@v1` (1.3.14), `bun install
+  --frozen-lockfile` em `blog-backend/` e build do sidecar pra plataforma da
+  matrix (macOS ARM/Intel e Windows x64). Binário + `sidecar-vendor/` viram
+  inputs pra Fase 6 configurar como `externalBin` do Tauri.
+- ✅ ✨ **`sidecar-vendor/` no `.gitignore` — 2026-07-02.** Build artifact,
+  não vai no repo. `bun.lock` (text format Bun 1.3) COMMITADO pra o
+  `--frozen-lockfile` do CI funcionar; `bun.lockb` continua bloqueado.
+- ✅ ✨ **Verificação — 2026-07-02.** `bun run typecheck` sem erros. Binário
+  Mac local: `./tng-blog-sidecar` sobe em ~1s, `/api/health` → 200 com
+  `{status:"ok", version:"0.2.0"}`, `/api/me` sem token → 401 com pt-BR,
+  scheduler loga warning e não sobe (correto pra ambiente sem service key).
+
+## Sprint 26 — Integração sidecar no Tauri (Fase 6) — 2026-07-02
+
+Sidecar do Blog agora sobe on-demand quando o React chama
+`invoke("blog_sidecar_start_lazy", { supabase_url, supabase_anon_key })` — só
+na 1ª vez que o botão Blog é clicado. Kill automático no shutdown do app.
+
+- ✅ ✨ **`src-tauri/Cargo.toml` — 2026-07-02.** Adicionada
+  `tauri-plugin-shell = "2"`.
+- ✅ ✨ **`src-tauri/tauri.conf.json` — 2026-07-02.** `bundle.externalBin` =
+  `["../blog-backend/tng-blog-sidecar"]` (Tauri busca com sufixo do target
+  triple automaticamente). `bundle.resources` = `["../blog-backend/sidecar-vendor"]`
+  — vai pro `resource_dir` do app empacotado.
+- ✅ ✨ **`src-tauri/capabilities/default.json` — 2026-07-02.** Nova permissão
+  scoped `shell:allow-execute` que só permite executar o binário
+  `tng-blog-sidecar` como sidecar (não deixa executar qualquer comando).
+  Também `shell:allow-kill` pra o shutdown poder matar o processo.
+- ✅ ✨ **`src-tauri/src/blog_sidecar.rs` — 2026-07-02.** Módulo Rust novo
+  com `BlogSidecarState` (Mutex<Option<CommandChild>> + porta), commands
+  `blog_sidecar_start_lazy(args)` (idempotente) e `blog_sidecar_status()`,
+  e `kill_sidecar(&state)`. Env vars passadas: `SUPABASE_URL` +
+  `SUPABASE_ANON_KEY` (do React), `SUPABASE_SERVICE_ROLE_KEY` (do
+  `std::env::var`, NUNCA do frontend — segredo do sidecar), `PORT` (default
+  8000), `NODE_PATH` (aponta pro `resource_dir/sidecar-vendor/node_modules`
+  pra o Sharp ser resolvido em runtime).
+- ✅ ✨ **`src-tauri/src/lib.rs` — 2026-07-02.** `.plugin(tauri_plugin_shell::init())`,
+  `.manage(BlogSidecarState::new())`, 2 commands adicionados ao
+  `invoke_handler`. `.build().run(|handle, event| ...)` substituiu
+  `.run(context)` para poder tratar `RunEvent::ExitRequested` — dispara
+  `kill_sidecar` antes de encerrar o app (evita zombie).
+- ✅ ✨ **`blog-backend/package.json` — 2026-07-02.** Scripts `build:*`
+  agora geram binário com sufixo de target triple que o Tauri espera:
+  `tng-blog-sidecar-aarch64-apple-darwin`,
+  `tng-blog-sidecar-x86_64-apple-darwin`,
+  `tng-blog-sidecar-x86_64-pc-windows-msvc.exe`.
+- ✅ ✨ **Verificação — 2026-07-02.** `cargo check --release` completa em
+  ~8s. 7 warnings (todas pré-existentes do `objc` crate, não introduzidas
+  aqui). Binário Mac ARM64 gerado com o nome correto.
+
+## Sprint 27 — UI React do Blog (Fase 7) — 2026-07-02
+
+Camada visual completa em React seguindo padrão do `SettingsPanel`:
+`BlogPanel` overlay tela cheia z-40 com sidebar de 5 abas + 5 telas. Botão
+"Blog" no header do Dashboard entre a busca ⌘K e a engrenagem. **App
+principal não teve nenhuma lógica alterada** — só adição de estado
+`blogOpen`, handler `handleOpenBlog`, botão e `<BlogPanel/>` no JSX.
+
+- ✅ ✨ **`src/types/blog.ts` — 2026-07-02.** Tipos `BlogSite`,
+  `BlogHistoricoItem`, `BlogAgendamento`, `BlogProgresso`, `BlogJob`.
+- ✅ ✨ **`src/lib/blogClient.ts` — 2026-07-02.** `blogFetch<T>(path, init)`
+  injeta `X-Supabase-Token` do `supabase.auth.getSession()`. `setBlogPort()`
+  guarda a porta que o sidecar retornou (fallback 8000..8010). `poll()`
+  utilitário pra polling de jobs.
+- ✅ ✨ **`src/components/blog/BlogPanel.tsx` — 2026-07-02.** Overlay z-40 com
+  header (ícone `fa-newspaper` + título Blog + botão X), sidebar 5 abas
+  (Novo artigo, Programação, Sites, Histórico, Configurações), corpo à
+  direita renderiza view ativa. ESC fecha.
+- ✅ ✨ **5 views em `src/components/blog/views/` — 2026-07-02.**
+  `NovoArtigoView` (select site + textarea multi-keyword + radios
+  agora/programar + publicar/rascunho + polling dos jobs), `ProgramacaoView`
+  (auto-refresh 5s, filtro por status colorido), `SitesView` (cards com
+  badges + testar + modal prompt por site + baixar plugin .zip),
+  `HistoricoView` (filtro por site + publicar rascunho + baixar .docx +
+  abrir post), `ConfigView` (prompt geral + Gemini + Magnific).
+- ✅ ✨ **`src/screens/DashboardScreen.tsx` — 2026-07-02.** ADIÇÃO PURA:
+  imports (`invoke`, `BlogPanel`, `setBlogPort`), estado `blogOpen` +
+  `blogStarting`, handler `handleOpenBlog` que chama
+  `invoke("blog_sidecar_start_lazy", { args: {...} })`, seta porta,
+  aguarda health responder (20× 200ms) e abre painel. Botão "Blog" no
+  header + `<BlogPanel/>` no JSX. **Nenhuma lógica existente removida ou
+  modificada.**
+- ✅ ✨ **Verificação — 2026-07-02.** `npx tsc --noEmit` zero erros.
+
+## Sprint 28 — Migration blog.ai_usage + bump v0.2.0 (Fase 8) — 2026-07-02
+
+Tabela separada `blog.ai_usage` no Supabase pra rastrear consumo do Gemini
+pelo Blog — **não polui o painel "Uso da IA" do app principal**. Card novo
+dentro do painel Blog mostra o consumo mensal. Bump v0.1.11 → **v0.2.0**
+sinaliza a feature grande da Release.
+
+- ✅ ✨ **`supabase/migrations/20260702000001_blog_ai_usage.sql` —
+  2026-07-02.** Cria `blog.ai_usage` (id, user_id → auth.users, site_id →
+  blog.sites, job_id, modelo, input_tokens, output_tokens, total_tokens
+  GENERATED ALWAYS AS STORED, custo_estimado, created_at). RLS: select por
+  authenticated (equipe compartilha), insert own (user_id = auth.uid()).
+  Índice em `created_at desc` e `(user_id, created_at desc)`. Adicionada
+  ao `supabase_realtime` publication.
+- ✅ ✨ **`blog-backend/src/steps/gemini.ts` — 2026-07-02.** `ArtigoGerado`
+  ganha campo opcional `usage: { modelo, input_tokens, output_tokens }`.
+  Extrai de `resp.usageMetadata` (fallback 0 se ausente). Nunca logga a
+  chave, só os counts.
+- ✅ ✨ **`blog-backend/src/pipeline.ts` — 2026-07-02.** Após etapa "texto"
+  ok, chama `_registrarUso` (INSERT best-effort em `blog.ai_usage`).
+  **Erro aqui não derruba o pipeline** — o rastreio é acessório.
+- ✅ ✨ **`blog-backend/src/routes/config.ts` — 2026-07-02.** Nova rota
+  `GET /api/config/ai-usage` — agrega tokens do mês corrente em
+  `{ mes_atual: { input_tokens, output_tokens, total_tokens,
+  artigos_gerados, por_modelo } }`.
+- ✅ ✨ **`src/components/blog/views/ConfigView.tsx` — 2026-07-02.** Card
+  "Uso da IA do Blog" no topo com 4 stats (Artigos, Tokens entrada, Tokens
+  saída, Total). Componente `<Stat>` com `.toLocaleString("pt-BR")` pros
+  números formatados.
+- ✅ ✨ **Bump v0.1.11 → v0.2.0 — 2026-07-02.** `package.json`,
+  `src-tauri/tauri.conf.json` e `src-tauri/Cargo.toml`. Feature grande
+  (integração do Blog) justifica minor bump — Sprints 18-20 foram patch
+  bumps.
+- ✅ ✨ **Verificação — 2026-07-02.** `npx tsc --noEmit` zero erros no
+  frontend, `bun run typecheck` zero erros no backend, `bun test` mantém
+  2/2 pass.
+
+**Pendente do usuário pra Release final:**
+- Aplicar migration `20260702000001_blog_ai_usage.sql` no Supabase.
+- Criar tag `v0.2.0` no GitHub — dispara o workflow `release.yml` que
+  builda o sidecar em Mac ARM64/x64 e Windows x64 e empacota tudo.
+- Testar o executável Mac local antes do release (rodar via `npm run tauri dev`
+  e verificar que o botão Blog abre o painel).
+
+## Sprint 29 — Correções críticas do code review (Fase 9) — 2026-07-02
+
+Code review Opus 4.8 encontrou 15 defeitos na migração. Os 6 críticos que
+quebravam o painel Blog em produção foram corrigidos aqui; os 9 restantes
+(alto/médio) ficam documentados na seção "Riscos residuais" abaixo para
+serem atacados numa Sprint 30 antes do release público.
+
+- ✅ 🐛 **Fix envelope de resposta — 2026-07-02.** Backend retorna
+  `{ sites: [...] }`, `{ historico: [...] }`, `{ agendamentos: [...] }`
+  mas os 5 views chamavam `blogFetch<BlogSite[]>` e faziam `.filter/.map`
+  direto — `TypeError: data.filter is not a function` → tela em branco.
+  Ajustado no front (`NovoArtigoView`, `HistoricoView`, `SitesView`,
+  `ProgramacaoView`) pra desestruturar `.sites/.historico/.agendamentos`.
+- ✅ 🐛 **Download `.docx` com auth — 2026-07-02.** `<a href={docxUrl}>`
+  fazia GET sem `X-Supabase-Token` → 401 em todo download. Novo helper
+  `blogFetchBlob(path)` em `src/lib/blogClient.ts` faz fetch autenticado
+  + `URL.createObjectURL(blob)` + `<a download>` sintético.
+  `HistoricoView` chama via `<button onClick>`.
+- ✅ 🐛 **Publicar rascunho não corrompe lista — 2026-07-02.** Backend
+  retorna `{ok:true}` mas front tentava `setItens(prev.map(h.id===id ? next : h))`,
+  transformando item em `{ok:true}` que sumia do filtro. Trocado por
+  `await carregar()` — reload da lista após publish.
+- ✅ 🐛 **`PUT /api/config/magnific/modelo` corrigido — 2026-07-02.**
+  `MagnificCard` enviava `{ modelo_ia: ... }` mas backend só aceita
+  `{ modelo: ... }` (retornava 400 sempre). Trocado no `ConfigView.tsx`.
+- ✅ 🐛 **CORS libera 5173 (Vite dev) — 2026-07-02.** `blog-backend/src/main.ts`
+  só tinha `1420` (template padrão Tauri) — mas este projeto roda Vite
+  em `5173` (ver `vite.config.ts`). Todas as chamadas do painel Blog em
+  `npm run tauri dev` batiam em CORS error. Adicionados `http://localhost:5173`
+  e `http://127.0.0.1:5173`.
+- ✅ 🐛 **Rust lê porta efetiva do sidecar — 2026-07-02.** `blog_sidecar.rs`
+  retornava `port: desired_port` — mas o sidecar tem fallback 8000→8010
+  se a porta desejada está ocupada. Consequência: outro app usando 8000
+  faria o painel bater em endpoint fantasma. Agora o handler de stdout
+  parseia `"rodando em http://127.0.0.1:XXXX"` e envia via
+  `tokio::sync::oneshot`. `blog_sidecar_start_lazy` faz
+  `timeout(Duration::from_secs(8), rx_porta).await` antes de responder.
+  Nova dep `tokio = { features = ["sync", "time"] }` no `Cargo.toml`.
+- ✅ ✨ **Verificação final — 2026-07-02.** Frontend `tsc --noEmit`
+  zero erros. Backend `bun run typecheck` zero erros, `bun test` 2/2 pass.
+  Rust `cargo check --release` OK (só warnings pré-existentes do `objc`).
+  Binário Mac ARM64 v0.2.0 rebuild = 62 MB + `sidecar-vendor` 16 MB.
+
+### Riscos residuais (Sprint 30 pré-release público)
+
+Findings do code review NÃO corrigidos aqui. Nada bloqueia deployment
+interno, mas devem ser atacados antes do release público:
+
+- **[ALTO] `SUPABASE_SERVICE_ROLE_KEY` só via env do Tauri.** Em `.dmg`/`.msi`
+  distribuído, essa var estará vazia → scheduler não sobe e `/api/conectar`
+  do plugin WP sempre retorna 503 (fluxo de onboarding quebra silenciosamente).
+  Decisão: (a) documentar exportação da var pra admin, ou (b) mudar
+  `/api/conectar` pra fluxo autenticado (usuário loga no app antes do
+  botão "Conectar" no WP).
+- **[ALTO] `NovoArtigoView` vaza `setInterval`** — cada job cria um
+  interval que continua polling depois do painel Blog fechar. Guardar
+  handles em `Map<jobId, NodeJS.Timeout>` num `ref` e `clearInterval` no
+  cleanup do `useEffect`.
+- **[ALTO] `JOBS` global sem limite** em `routes/artigos.ts` — usuário
+  colar lista de 5000 keywords cria 5000 pipelines paralelos. Adicionar
+  fila com `concurrency: 2` (ex.: `p-queue`) + validação server-side
+  `keywords.length <= 20`.
+- **[ALTO] Race em `FileTokenStorage`** (Magnific OAuth) — `setTokens` +
+  `setClientInfo` + `setCodeVerifier` chamados em paralelo pelo SDK MCP
+  podem se sobrescrever. Adicionar mutex (`async-mutex` ou Promise chain).
+- **[ALTO] Scheduler sem reclaim de "executando" órfão** — se sidecar
+  crashar no meio de um artigo, agendamento fica `status='executando'`
+  pra sempre. Adicionar ciclo prévio ao claim que volta pra `pendente`
+  qualquer coisa com `updated_at < now() - interval '10 minutes'`.
+- **[ALTO] Sem timeout no MCP Magnific** — `_callTool` pode ficar
+  pendurado se o servidor demora. Envelopar em `Promise.race` + 60s.
+- **[MÉDIO] CSRF em `POST /api/conectar`** — qualquer processo no
+  localhost pode envenenar `blog.sites`. Checar `Origin`/`Referer` +
+  rate limit + bootstrap token curto TTL embutido no zip do plugin.
+- **[MÉDIO] Shutdown com `void closeMagnific()`** — não aguarda.
+  Trocar por `async encerrar() { await closeMagnific(); await server.stop(false); }`.
+- ~~**[MÉDIO] `blog_sidecar_start_lazy` não detecta child morto**~~ —
+  resolvido na Sprint 30 (health-check TCP + limpeza no `Terminated`).
+
+## Sprint 31 — Bugs pós-produção + reorg do painel Blog — 2026-07-04
+
+Usuário testou de novo: imagens do Magnific voltaram (fix da Sprint 30
+pegou), Gemini + RankMath preencheram tudo. Mas apareceram 2 bugs
+adicionais e 4 pedidos de feature no painel. Tudo entregue nesta sprint.
+Zero mudanças no app principal (mantém a política de escopo).
+
+- ✅ 🐛 **"Abrir post" no Histórico dava `shell.open not allowed` — 2026-07-04.**
+  Botão usava `<a href={url} target="_blank">`, que o Tauri intercepta e
+  redireciona pro comando `shell:open` (não permitido nas capabilities).
+  Fix: trocado por `<button onClick={() => openUrl(url)}>` do
+  `@tauri-apps/plugin-opener` — a capability `opener:default` já está
+  concedida no `default.json`. Aplicado em `HistoricoView`, `ProgramacaoView`
+  e no card de progresso do `NovoArtigoView`. Nada mexido em capabilities.
+- ✅ 🐛 **Publicar rascunho dizia OK mas o post continuava draft — 2026-07-04.**
+  `routes/historico.ts::/publicar` chamava `wpFetch` com
+  `body: JSON.stringify({status:"publish"})` — sem `Content-Type:
+  application/json`, o WP não parseava o body e mantinha o status.
+  Trocado por `json: { status: "publish" }` (mesmo caminho que
+  `criarPost` já usa). Bug simples com sintoma silencioso.
+- ✅ 🐛 **`window.confirm` no `ProgramacaoView.cancelar()` — 2026-07-04.**
+  Mesmo caso do `ConfigView` na Sprint 30: `dialog.confirm not allowed`
+  quando cancelar agendamento. Trocado por confirmação inline em 2 cliques
+  (4s de timeout), igual ao padrão da `SitesView`.
+- ✅ ✨ **Novo artigo em 2 colunas com busca de site — 2026-07-04.**
+  O `<select>` de sites virava um problema conforme a lista cresce (o
+  usuário previu chegar a dezenas). Reformulado em 2 colunas: à esquerda,
+  aside 280px com busca instantânea + lista alfabética de sites clicáveis
+  (destaque no selecionado); à direita, form com cabeçalho mostrando o
+  site selecionado + keywords + modo + status. Padrão inicial agora é
+  **Rascunho** (feedback: "quase todo blog revisa antes de publicar").
+- ✅ ✨ **Sites com busca + drawer por site — 2026-07-04.**
+  Card de cada site agora abre um drawer lateral (max-w-3xl, alinhado à
+  direita) com abas "Programação" e "Histórico" filtradas pelo site em
+  questão — muito mais escalável que ver tudo misturado em abas globais.
+  Ações (Testar/Prompt/Editar/Remover) migraram do card pro cabeçalho do
+  drawer, deixando o card mais limpo. Contador no canto do card:
+  `X/Y pub/total` mostrando publicações vs total (pub+pendente). Badge
+  extra em azul quando há agendamentos pendentes. Campo de busca no topo
+  do painel Sites. `ProgramacaoView` e `HistoricoView` receberam prop
+  `fixedSiteId?: string` — quando presente, filtram + escondem o seletor
+  global; reuso puro sem duplicar código.
+- ✅ ✨ **Reorg do menu lateral — 2026-07-04.**
+  Menu principal do BlogPanel virou: **Novo artigo** · **Sites** ·
+  **Prompt** · **Uso de IA** · **Notificações** · **Configurações**.
+  Programação e Histórico saíram do menu (agora vivem dentro do drawer de
+  cada site). Prompt e Uso de IA eram cards do ConfigView e viraram tabs
+  próprias — `PromptView.tsx` e `UsoIAView.tsx` novos. ConfigView ficou
+  só com credenciais Gemini + Magnific (fica ~50% mais curto e mais
+  fácil de escanear).
+- ✅ ✨ **Notificações persistentes (novo módulo) — 2026-07-04.**
+  Motivação: scheduler roda em background; se um agendamento falhar
+  quando ninguém está com o painel aberto, o evento precisa persistir.
+  Toast só cobre o "aqui e agora" — tabela cobre o "depois". Entregas:
+  - **DB**: migration `20260704000001_blog_notificacoes.sql` cria
+    `blog.notificacoes` com colunas `tipo` (info|success|warning|error),
+    `titulo`, `mensagem`, `contexto jsonb`, `lida`, FKs opcionais
+    (`site_id`, `job_id`, `agendamento_id`), RLS com policies `select/
+    insert/update/delete` restritas ao dono (`user_id = auth.uid()`).
+    Índice parcial em `(user_id, lida) WHERE lida=false` pra badge do
+    contador ficar barato. Publicação em `supabase_realtime` pra
+    subscribe futuro.
+    ⚠️ **Precisa ser aplicada** — rode `supabase db push` ou aplique
+    manualmente no dashboard.
+  - **Backend**: novo `routes/notificacoes.ts` com endpoints
+    `GET /` (lista, `?nao_lidas=1` filtra),
+    `GET /nao-lidas/count` (só o número, pro badge),
+    `POST /:id/lida`, `POST /lidas`, `DELETE /:id`, `DELETE /lidas`.
+    `scheduler.ts` insere notificação após cada agendamento (sucesso
+    ou falha, com link do post no `contexto`). `routes/artigos.ts`
+    (modo "agora") insere notificação ao final de cada job em
+    background. Ambos usam try/catch envelope — falha na notificação
+    nunca quebra o pipeline.
+  - **Frontend**: novo `NotificacoesView.tsx` (lista + filtro "só não
+    lidas" + marcar individual/todas + limpar lidas + polling 15s +
+    "Abrir post" via plugin-opener). Novo item "Notificações" no menu
+    lateral com badge laranja mostrando não lidas — `BlogPanel` faz
+    polling de `/api/notificacoes/nao-lidas/count` a cada 20s e ao
+    trocar de aba. Tipo `BlogNotificacao` no `src/types/blog.ts`.
+- ✅ ✨ **Verificação — 2026-07-04.** `bunx tsc --noEmit` backend: exit 0.
+  `npx tsc --noEmit` frontend: exit 0. Binário Mac ARM64 rebuild
+  (`bun run build:mac`) → copiado pra `src-tauri/target/debug/tng-blog-sidecar`
+  → sidecar antigo morto. Próxima abertura do painel Blog usa o binário
+  novo (health-check TCP da Sprint 30 detecta a porta caída e respawna).
+  Restou aplicar a migration `20260704000001_blog_notificacoes.sql` no
+  Supabase — sem ela o `NotificacoesView` responde 500 e o badge fica
+  em 0 permanente. Não afeta o resto do painel.
+- ✅ 🐛 **Novo artigo travado em 1 coluna — CSS arbitrário inválido — 2026-07-08.**
+  Causa real (a hipótese do breakpoint em 2026-07-06 estava errada): a
+  classe `grid-cols-[260px,1fr]` gera `grid-template-columns: 260px,1fr`,
+  que é CSS **inválido** — as trilhas do grid são separadas por espaço, não
+  vírgula. E no valor arbitrário do Tailwind o espaço se escreve com `_`.
+  O browser descartava a declaração inválida e sobrava o `grid-cols-1` →
+  1 coluna. Valia pro `lg:` original E pro `md:` — nunca funcionou.
+  Fix: `grid-cols-[260px_1fr]` (underscore) e removido o breakpoint de vez
+  (é app desktop, não precisa de media query). Só frontend — Tauri dev
+  faz hot-reload, sem rebuild de sidecar.
+- ✅ ⚡ **Sites carregava em 3-5s — 2026-07-06.**
+  `SitesView` chamava `/api/sites` + `/api/agendamentos` (payload inteiro)
+  + `/api/historico` (payload inteiro) só pra montar o badge `X/Y pub/total`.
+  Com dezenas de artigos publicados a serialização + transporte custava
+  3.5s no meu próprio ambiente (logs do usuário: `GET /api/historico 5426ms`).
+  Novo endpoint `GET /api/sites/summary` faz o `Promise.all` no sidecar
+  com `select("site_id")` filtrado por status — projeção mínima. Frontend
+  passou a fazer 1 chamada só. Bônus: os 3 payloads separados sumiram
+  do log (menos requests concorrentes na abertura). Não removi
+  `/api/agendamentos` e `/api/historico` porque `ProgramacaoView` e
+  `HistoricoView` ainda usam com filtro por site dentro do drawer.
+- ✅ 🐛 **App "abrindo e fechando" durante a geração — CRÍTICO — 2026-07-08.**
+  Root cause achado no log do usuário: `Info File src-tauri/data/imagens/
+  job-… changed. Rebuilding application...`. O sidecar grava as imagens
+  baixadas do Magnific em `${DATA_DIR}/imagens/` — e `DATA_DIR` default é
+  `./data`, que em dev resolve pra `src-tauri/data` (cwd do sidecar). O
+  watcher do `tauri dev` vigia `src-tauri/` inteiro, então CADA imagem
+  baixada disparava rebuild+restart do app, matando o pipeline no meio e
+  (às vezes) deixando o app num estado que não reabria. O mesmo valia pro
+  `magnific_token.json` e `settings.json` mudando.
+  Fix: `src-tauri/.taurignore` (sintaxe .gitignore, só afeta dev) ignorando
+  `data/`. Só vale a partir do próximo start do `tauri dev` — como o app já
+  tinha crashado, o usuário reinicia de qualquer forma. Não afeta release
+  (não há watcher em produção).
+- ✅ 🐛 **Scheduler DESLIGADO → agendamentos nunca executavam — 2026-07-08.**
+  Log: `[scheduler] SUPABASE_SERVICE_ROLE_KEY ausente. Scheduler DESLIGADO`.
+  A chave `service_role` (que liga o scheduler) vinha só de
+  `std::env::var` no `blog_sidecar.rs`, e o usuário roda `npm run tauri dev`
+  sem exportá-la → vazia → scheduler off → os 3 posts programados ficaram
+  todos `pendente` (inclusive o 1º, que tem `data_programada = now` e só é
+  publicado quando o scheduler roda o claim `status=pendente AND
+  data_programada<=now()` a cada 60s).
+  Descoberta chave (testada com o binário): o sidecar Bun compilado
+  **auto-carrega `.env` do cwd**. MAS o `blog_sidecar.rs` passava
+  `SUPABASE_SERVICE_ROLE_KEY=""` explícito, e variável de processo SOMBREIA
+  o `.env` no Bun → continuava off. Fix: `blog_sidecar.rs` só injeta a
+  variável quando ela é **não-vazia**; ausente, o Bun preenche do
+  `src-tauri/.env` (dev). Adicionado `.env*` ao `src-tauri/.gitignore`
+  (repo público — a chave nunca pode vazar). Ação do usuário: criar
+  `src-tauri/.env` com `SUPABASE_SERVICE_ROLE_KEY=...`. ⚠️ Produção: a
+  distribuição pra equipe ainda precisa definir como a chave chega ao
+  sidecar sem embutir no binário (questão em aberto — repo público).
+- ✅ ✨ **Novo artigo: colunas 40/60 + progresso no topo — 2026-07-08.**
+  Coluna do site alargada pra ~40% via `grid-cols-[minmax(0,2fr)_
+  minmax(0,3fr)]` (o `minmax(0,…)` impede URL longa de estourar a trilha).
+  Card "Em processamento" (jobs "agora") movido do rodapé pro topo do
+  painel — antes passava despercebido lá embaixo.
+- ✅ ✨ **Toasts flutuantes (topo direito) — 2026-07-08.**
+  Faltava a parte "flutuante" da feature 8 (só tinha o drawer/badge
+  persistente). Entregue: `src/lib/toast.ts` (event bus a nível de módulo,
+  sem Provider — dá pra disparar `showToast()` de qualquer lugar) +
+  `ToastHost.tsx` (pilha no topo direito, `z-[60]` acima de painel/drawers,
+  auto-descarte 6s, botão "Abrir post", cor por tipo). Montado 1x no
+  `BlogPanel`. Fontes de toast: (1) `NovoArtigoView` toasta na hora quando
+  um job "agora" conclui/falha; (2) o poller do `BlogPanel` toasta eventos
+  do SCHEDULER (notificações com `agendamento_id != null`) — assim o
+  usuário vê "2º post falhou: <motivo>" mesmo sem estar olhando. Guarda
+  `primed` evita vomitar o backlog de não-lidas ao abrir o painel; `vistos`
+  Set evita re-toastar. Jobs "agora" (agendamento_id nulo) não duplicam
+  porque o poller só toasta os de scheduler.
+- ✅ ✨ **Verificação — 2026-07-08.** `npx tsc --noEmit` frontend: exit 0.
+  `cargo check --lib` src-tauri: ok (só warnings objc pré-existentes).
+  Sem rebuild de sidecar (nada em `blog-backend/src` mudou neste turno).
+  Rust recompila no `tauri dev`; frontend hot-reload; `.taurignore` vale
+  no próximo start.
+- ✅ 🐛 **Scheduler "ligado" que nunca executava — claim quebrado — CRÍTICO — 2026-07-09.**
+  Mesmo com a service key ok (usuário criou `src-tauri/.env` certinho), o
+  1º agendamento vencido continuou `pendente`. Diagnóstico por camadas:
+  query do scheduler reproduzida via curl E via supabase-js retornava a
+  row → o problema estava DEPOIS. Era o `_reivindicar`: o UPDATE gravava
+  `executando_por: "sidecar-${hostname}-${pid}"`, mas a coluna é **uuid
+  com FK pra `auth.users`** (herança do app Python, que gravava o usuário
+  da sessão). Erro `22P02 invalid input syntax for type uuid` em TODO
+  claim — e `_reivindicar` retornava `false` SEM LOGAR, então parecia
+  "outro sidecar pegou". Trocar por `crypto.randomUUID()` só mudou o erro
+  pra `23503 violates foreign key` (segunda camada!). Fix definitivo: o
+  claim NÃO grava mais `executando_por` — a atomicidade vem do filtro
+  `.eq("status","pendente")` no UPDATE condicional, a coluna era só
+  informativa. E `_reivindicar` agora LOGA o erro (o silêncio escondeu o
+  bug por dias). Testado end-to-end: sidecar novo fez o claim e executou
+  o pipeline do agendamento real na hora.
+- ✅ ✨ **`/api/health` expõe `scheduler: boolean` + aviso no painel — 2026-07-09.**
+  `iniciarAgendador` retorna `ativo` no handle; health devolve. A
+  `ProgramacaoView` sonda 1x e mostra banner âmbar "Agendador desligado
+  neste computador" quando `false` — antes o operador programava posts
+  que nunca rodariam e só descobria dias depois.
+- ✅ 🐛 **"Baixar .docx" não fazia nada — 2026-07-09.**
+  O fluxo era fetch autenticado → blob URL → `<a download>` + `click()`.
+  O WKWebView do macOS IGNORA silenciosamente cliques em
+  `<a download href="blob:">` (não há handler de download no webview) —
+  por isso nem console logava. Fix: `save()` do `@tauri-apps/plugin-dialog`
+  (capability `dialog:default` já inclui `allow-save`) + novo comando Rust
+  `write_file_bytes(path, bytes)` no `lib.rs` (padrão do `read_file_bytes`
+  existente) grava o blob no destino escolhido. Toast de sucesso com o
+  caminho salvo. Spinner "Gerando…" no botão.
+- ✅ ✨ **Programação só mostra o que está programado — 2026-07-09.**
+  `concluido` some da lista (vive no Histórico). Ficam: pendente
+  (relabel "Agendado", badge azul), executando e falhou (com motivo).
+- ✅ ✨ **Data/hora como badge destacado — 2026-07-09.**
+  Programação e Histórico mostram a data num badge próprio (borda +
+  fundo escuro + texto laranja + ícone relógio/calendário) em vez de
+  texto cinza pequeno — era a informação mais importante do card.
+- ✅ ✨ **Excluir em Programação e Histórico — 2026-07-09.**
+  Programação: "Cancelar" (pendente) / "Excluir" (falhou) — backend
+  `DELETE /api/agendamentos/:id` agora aceita `.neq("status","executando")`
+  em vez de só pendente. Histórico: novo `DELETE /api/historico/:id`
+  (apaga só o REGISTRO do painel; o post no WordPress fica — caso de uso:
+  publicou no site errado por falha humana, apaga lá e limpa aqui).
+  Ambos com confirmação inline em 2 cliques (padrão do projeto).
+- ✅ ✨ **Progresso de geração flutuante no topo direito — 2026-07-09.**
+  O bloco "Em processamento" do NovoArtigoView virou overlay
+  `fixed right-4 top-16 z-[55]` (abaixo dos toasts em top-4/z-60), com
+  cards de bg sólido + shadow. Não empurra mais o layout do form.
+- ✅ ✨ **Toast "Agendamento criado" com atalho pra programação — 2026-07-09.**
+  Ao programar, em vez do aviso estático embaixo do form, sobe toast de
+  sucesso com botão "Ver programação" que navega direto: aba Sites →
+  drawer do site → aba Programação. Infra nova: `src/lib/blogNav.ts`
+  (bus de navegação, mesmo padrão do bus de toast), `BlogPanel` assina e
+  repassa `drawerRequest` pro `SitesView` (novo par de props), `SiteDrawer`
+  ganhou `initialTab`. Toast ganhou campo `acao?: {label, onClick}` e o
+  `ToastHost` renderiza o botão (fecha o toast ao clicar).
+- ✅ 🐛 **Retry no INSERT do histórico (falha parcial) — 2026-07-09.**
+  No smoke test end-to-end, o pipeline publicou o post no WP mas o INSERT
+  em `blog.historico` falhou com "socket connection was closed
+  unexpectedly" — a conexão HTTP reusada pelo supabase-js morreu durante
+  os MINUTOS de upload de imagens. Resultado enganoso: agendamento
+  "falhou" com post publicado e histórico sem a linha. Fixes:
+  `_registrarHistorico` agora tenta 3× com backoff (0s/2s/4s, cobrindo
+  erro do PostgREST E rejeição de socket do fetch); e o scheduler grava
+  `post_url` também no patch de FALHA — falha parcial mostra o link do
+  post no card.
+  ⚠️ Estado residual desse teste: agendamento "O que é GEO e SEO?"
+  (300683e2…) está `falhou` no banco, mas o post EXISTE como draft no WP
+  (`o-que-e-geo-e-seo` em teste.tngdigital.com.br). Reparo manual do
+  registro foi barrado por permissão — pendente de decisão do usuário
+  (ou simplesmente excluir o card de falha pelo painel).
+- ✅ ✨ **Verificação — 2026-07-09.** Frontend `npx tsc --noEmit` exit 0;
+  backend `bunx tsc --noEmit` exit 0; `cargo check --lib` exit 0. Sidecar
+  rebuild 2× + copiado pra `target/debug` + processos antigos mortos.
+  Smoke test real: binário novo fez claim do agendamento pendente,
+  executou o pipeline completo e o post chegou no WordPress como draft
+  (rascunho=true) — fix do scheduler confirmado end-to-end. Restam 2
+  agendamentos pendentes (10/07 e 11/07) que agora rodarão sozinhos.
+  Usuário confirmou: 1º artigo agendado publicou certinho.
+- ✅ ✨ **Histórico: excluir vira ícone + ações na mesma linha — 2026-07-09.**
+  Card reorganizado (pedido do usuário): lixeira só-ícone no canto
+  superior direito (confirmação 2 cliques vira ícone de alerta; tooltip
+  explica que o post no WP não é apagado); Publicar → Baixar .docx →
+  Abrir post agora ficam juntos numa linha no rodapé do card, nessa ordem.
+  "Abrir post" ganhou borda pra alinhar visualmente com os vizinhos.
+- ✅ ✨ **Uso de IA virou dashboard com filtros — 2026-07-09.**
+  Backend: `GET /api/config/ai-usage?periodo=hoje|7d|30d|mes|tudo`
+  (default `mes`) devolve `{periodo, inicio, totais {input, output,
+  total, execucoes, custo_estimado}, por_modelo[] (in/out/total/execuções
+  por modelo), execucoes[]}` — as execuções individuais (id, modelo,
+  tokens, custo, site_id, job_id, created_at), até 200 mais recentes.
+  Shape antigo `{mes_atual}` descontinuado (único consumidor era o
+  próprio UsoIAView). Frontend: chips de período, stats agregados (card
+  de custo só aparece quando `custo_estimado > 0`), tabela "Por modelo"
+  (execuções/entrada/saída/total) e tabela "Execuções" com data/hora,
+  modelo, site resolvido via `/api/sites`, tokens — com select de filtro
+  por modelo (client-side). Espelha o espírito do painel de IA do app
+  principal sem tocá-lo.
+- ✅ ✨ **Config: status como badge sólido no topo dos cards — 2026-07-09.**
+  Novo `StatusBadge` em `ConfigView`: pill com FUNDO verde sólido
+  (`bg-emerald-500` + texto escuro) quando ok, vermelho sólido quando não
+  conectado/sem chave, cinza "Verificando…" enquanto carrega. Renderizado
+  ACIMA do título de cada card (prop `badge` no `Section`) — primeira
+  coisa visível ao abrir Configurações. Status inline antigo (texto
+  verde/âmbar no corpo) removido dos dois cards.
+- ✅ ✨ **Verificação (rodada UI/UX) — 2026-07-09.** Frontend e backend
+  `tsc --noEmit` exit 0. Sidecar rebuild (mudou `routes/config.ts`) +
+  copiado pra `target/debug` + processo antigo morto — reabrir o painel
+  Blog respawna o novo.
+- ✅ 🐛 **"Baixar plugin WP" dava "Plugin não encontrado no sidecar" — 2026-07-09.**
+  `routes/plugin.ts` lia `wp-plugin/tng-blog-connect.php` do disco via
+  `import.meta.url`/`process.cwd()`. Funciona em dev (`bun run`), mas o
+  binário `bun build --compile` não tem `wp-plugin/` ao lado e o
+  `import.meta.url` aponta pro filesystem virtual `/$bunfs/` → todos os
+  paths falhavam → 500. (Mesma classe do bug do sharp, resolvido com
+  vendor.) Fix: EMBUTIR o .php no bundle em build time via import de texto
+  do Bun — `import pluginPhp from "../../wp-plugin/tng-blog-connect.php"
+  with { type: "text" }`. Vira string constante dentro do binário; zero
+  I/O de disco no runtime. Removido todo o `_localizarPlugin()`. Tipo do
+  import declarado em `src/php-modules.d.ts` (`declare module "*.php"`).
+  Verificado end-to-end: binário rodado de um cwd SEM `wp-plugin/` ao lado
+  serviu zip válido; PHP extraído idêntico ao original byte a byte (8887 B).
+- ✅ 🐛 **"Baixar plugin WP" clicava e nada acontecia (parte 2) — 2026-07-09.**
+  Depois do fix do backend, o botão ainda não baixava — e sem erro no
+  console. Causa: era um `<a href={pluginDownloadUrl}>` e o WKWebView do
+  macOS ignora silenciosamente navegação/download por link pra binários
+  (IDÊNTICO ao bug do .docx de 2026-07-09). Fix igual: `SitesView` agora
+  faz `blogFetchBlob("/api/plugin/download")` → `save()` do plugin-dialog
+  → comando Rust `write_file_bytes`, com spinner "Baixando…" e toast de
+  sucesso/erro. Removido `pluginDownloadUrl`/`getBlogPort` (só frontend,
+  sem rebuild de sidecar). Nota pro futuro: QUALQUER download no painel
+  Blog tem que passar por esse fluxo — `<a download>` nunca funciona no
+  webview do Tauri.
+- ✅ 🐛 **App CONGELAVA ao publicar vários artigos — tempestade de auth — CRÍTICO — 2026-07-09.**
+  Usuário publicou em 2 sites em sequência (2 pipelines simultâneos) + 2
+  programados, sem intervalo, e o app inteiro travou (voltou depois de
+  ~1min). Diagnóstico via `registros-terminal.txt` (7200 linhas): o
+  `middleware/auth.ts` chamava `auth.getUser(token)` — ida à rede pra
+  `/auth/v1/user` do Supabase — EM CADA request. Com o painel pollando
+  (progresso de job a cada 2s × 2 jobs, notificações, sites, etc.), virou
+  uma enxurrada de `getUser` que estourou o RATE LIMIT de auth do Supabase:
+  100× `ConnectionRefused` em `auth/v1/user`, o auth-js entrou em retry de
+  ~75s por request (152 respostas >5s, várias em 75.000ms, uma em 86s),
+  163 respostas 401, e o Bun.serve saturou → UI congelada (todo botão faz
+  `blogFetch` que pendurava). Quando o rate limit passou, drenou e "voltou".
+  Fix em 3 camadas (opção 4+2+3, decidido com o usuário):
+  - **Opção 4 — validação local do JWT (a cura):** `middleware/auth.ts`
+    agora valida a ASSINATURA do token localmente com `jose`
+    (`createRemoteJWKSet` + `jwtVerify`), ZERO rede por request. O projeto
+    assina com ES256 e expõe a chave PÚBLICA no JWKS (`/auth/v1/.well-known/
+    jwks.json`) — validar com ela não exige segredo. JWKS é buscado 1× e
+    cacheado (refetch automático em `kid` novo). Não força iss/aud (a
+    assinatura válida já prova a origem; evita hard-fail por formato).
+    User montado a partir das claims (`sub`→id, `email`). Trade-off: token
+    revogado no servidor vale até expirar (~1h) — irrelevante num sidecar
+    local. Dep nova: `jose@6`.
+  - **Opção 3 — falhar rápido:** `blogFetch`/`blogFetchBlob` ganharam
+    AbortController com timeout (20s / 60s downloads) — request travado
+    aborta em vez de pendurar a UI.
+  - **Opção 2 — não empilhar polls:** guard in-flight no poll de
+    notificações (`BlogPanel`, + pula quando `document.hidden`) e no poll de
+    progresso de job (`NovoArtigoView`, timeout 8s).
+  Testado no binário compilado: sem token → 401 em 1ms; token lixo → 401 em
+  2ms; JWT com assinatura falsa → 401 (1ª req 127ms buscando JWKS, 2ª/3ª
+  ~1ms cacheado). Zero rede por request depois do 1º fetch — a tempestade
+  ficou estruturalmente impossível. (Positivo com token real: validar
+  in-app.)
+- ✅ ✨ **Verificação (auth/anti-freeze) — 2026-07-09.** Frontend e backend
+  `tsc --noEmit` exit 0. Sidecar rebuild + deploy em `target/debug` +
+  antigo morto.
+- ✅ ✨ **Fila SERIAL de pipelines — 1 artigo por vez — 2026-07-09.**
+  Decisão do usuário: em vez de rodar vários em paralelo (o que gerava a
+  carga que travou o app), executar UM de cada vez. Novo módulo
+  `pipelineQueue.ts` (FIFO, 1 worker global): `enfileirar()` (fire-and-forget,
+  modo "agora") e `enfileirarComResultado()` (scheduler, que precisa do
+  resultado). `routes/artigos.ts` agora ENFILEIRA cada keyword em vez de
+  `void (async…)()` concorrente; `scheduler.ts` roda pela MESMA fila — os
+  dois caminhos nunca colidem. Job criado nasce `etapa="na_fila"` e o
+  `onStart` flipa pra "iniciando" quando chega a vez. `NomeEtapa` (pipeline)
+  e `BlogProgresso` (front) ganharam `na_fila`. UI: `NovoArtigoView` mostra
+  o card com ampulheta âmbar + borda tracejada + "Na fila — aguardando
+  finalizar o artigo em processamento…" (sem spinner); vira spinner normal
+  quando começa. Resolve o backlog "fila de concorrência" de forma mais
+  forte que o pedido original (serial total, não 2-3 paralelos).
+- ✅ ⚡ **Abas Programação/Histórico do drawer voltaram a ser rápidas — 2026-07-09.**
+  Regressão de percepção: a lista de Sites foi otimizada antes (via
+  `/api/sites/summary`), mas as abas DENTRO do drawer usam
+  `ProgramacaoView`/`HistoricoView`, que puxavam dados pesados. Fixes:
+  `ProgramacaoView` agora busca `/api/agendamentos?site_id=X` (filtro no
+  SERVIDOR, antes puxava TODOS e filtrava no cliente) e NÃO busca
+  `/api/sites` no drawer (nome do site já está no cabeçalho); + guard
+  anti-overlap no poll de 5s. `HistoricoView` (já filtrava histórico por
+  site) parou de buscar `/api/sites` no drawer. Nome do site escondido nos
+  cards quando `fixedSiteId` (redundante). Menos requisições e payloads
+  menores por carga.
+
+## Backlog — robustez pra publicação em massa (2026-07-09)
+
+A **fila serial** (acima) resolveu o gargalo de concorrência de forma direta:
+como só roda 1 pipeline por vez, Gemini/Magnific/WordPress nunca recebem
+chamadas paralelas nossas. Os itens abaixo deixaram de ser risco de "rajada"
+e viram só robustez de UM pipeline isolado (que já funciona). Reavaliar só se
+um dia quisermos paralelismo controlado (2-3 por vez) em vez de serial:
+
+- ✅ **Fila de concorrência dos pipelines** — RESOLVIDO pela fila serial
+  (`pipelineQueue.ts`). Modo "agora" e scheduler compartilham 1 worker.
+- ⏳ **Rate limits do Gemini.** Menos crítico agora (chamadas serializadas,
+  nunca paralelas). Ainda vale conferir retry/backoff em `steps/gemini.ts`
+  pra um 429 pontual não derrubar o artigo.
+- ⏳ **Magnific: créditos.** Concorrência deixou de ser problema (serial);
+  resta só o limite de CRÉDITO da conta sob volume alto ao longo do tempo.
+- ⏳ **Upload no WordPress.** Uploads agora são serializados por natureza;
+  o retry do INSERT do histórico já cobre o "socket closed" transitório.
+- ⏳ **Idempotência/observabilidade.** Notificação + toast + card "na fila"
+  cobrem o acompanhamento; validar mensagens sob uma fila longa real.
+
+## Sprint 30 — Correções pós-teste (Magnific OAuth + Gemini parser) — 2026-07-03
+
+Usuário testou o painel em produção, primeiro clique em "Conectar" no
+Magnific abriu o browser e caiu em `ERR_CONNECTION_REFUSED`; segundo clique
+disse "Conectado" sem verificar de fato; ao gerar artigo, quebrou com
+"A resposta do Gemini veio em um formato inesperado". Três bugs
+correlatos, todos corrigidos aqui.
+
+- ✅ 🐛 **Race no callback OAuth do Magnific — 2026-07-03.**
+  `_conectar()` chamava `client.connect(transport)` ANTES de subir o
+  callback server em `localhost:8765` — mas o SDK MCP dispara
+  `redirectToAuthorization` (que abre o browser) DENTRO do `connect()`.
+  Se o Magnific redirecionar rapidamente, o browser bate no callback
+  antes do server subir → `ERR_CONNECTION_REFUSED`. Refatorado:
+  `esperarCallback()` agora retorna síncrono um `CallbackHandle`
+  (`{ promise, cancel }`) com o server já bindado; `_conectar()` sobe
+  o server ANTES do `client.connect()` que dispara o browser. Se algo
+  falhar antes do callback chegar, `handle.cancel()` derruba o server.
+- ✅ 🐛 **`GET /api/config/magnific` reportava falso "conectado" — 2026-07-03.**
+  Verificação era `existsSync(tokenPath)` — mas o SDK cria o arquivo
+  no meio do fluxo para gravar `client_info` (DCR) e `code_verifier`
+  (PKCE), mesmo antes de receber tokens. Após um OAuth abortado, o
+  arquivo existia sem `access_token` → status "conectado" falso.
+  Trocado por `storage.getTokens()?.access_token` check real.
+- ✅ 🐛 **Retry interativo limpa token expirado — 2026-07-03.** Na
+  1ª tentativa silenciosa, se o token do disco der `UnauthorizedError`,
+  `_conectar()` agora chama `provider.invalidateCredentials("tokens")`
+  + `("verifier")` antes de cair no interativo — evita reusar PKCE
+  velho num novo fluxo.
+- ✅ 🐛 **Gemini: parser sem log do texto bruto — 2026-07-03.**
+  Erro "A resposta do Gemini veio em um formato inesperado" era
+  disparado em `parseEValidar` quando `JSON.parse` retornava algo que
+  não era objeto (ex.: `null`, array, string) — mas o texto bruto
+  nunca era logado, impossibilitando diagnóstico. Agora `logSeguro`
+  dumpa os primeiros 500 chars da resposta e a mensagem pro usuário
+  inclui o tipo real recebido (`recebido: array, esperado: objeto JSON`).
+  Também trata resposta vazia com mensagem específica.
+- ✅ ✨ **Verificação — 2026-07-03.** `bunx tsc --noEmit` no
+  blog-backend: exit 0. Binário Mac ARM64 rebuild via `bun run build:mac`
+  → 62 MB. Usuário precisa fechar+reabrir o app pra pegar o binário
+  novo (o sidecar em execução é o antigo).
+- ✅ 🐛 **BUG CRÍTICO: prompt padrão vazio no bundle — 2026-07-03.**
+  Primeiro teste real de geração de artigo caiu com Gemini devolvendo
+  schema exemplo `{id, name, price, isInStock, tags, manufacturer, ...}`.
+  Causa: `blog-backend/src/prompt.ts::getPrompt()` tentava
+  `Bun.file(resolve(import.meta.dir, "prompt_padrao_default.txt"))` como
+  seed — funciona em dev, mas `bun build --compile` **não bundleia
+  recursos `.txt`**, só código. No binário standalone, `seed.exists()`
+  retornava `false` → `getPrompt()` devolvia `""` → `savePrompt("")`
+  gravava arquivo vazio → Gemini recebia `contents=""` → respondia com
+  schema Product da doc oficial. Fix: criado
+  `blog-backend/src/prompt_padrao_default.ts` com o texto embutido como
+  `PROMPT_PADRAO_DEFAULT` string TS — vai pro bundle direto. `prompt.ts`
+  importa a constante e re-semeia arquivos vazios existentes.
+- ✅ 🐛 **Aplicação das divergências achadas na comparação — 2026-07-03.**
+  Após comparação bloco a bloco entre Python e TS+React, corrigidas as
+  divergências que causavam bugs ou UX pior que o app original:
+  (1) **Bloco 6 (imagens)** — reescrito `blog-backend/src/steps/images.ts`
+  pra bater com Python: 1 `stock_search` com a keyword do artigo (não N
+  buscas por prompt do Gemini) → baixa até N imagens do banco → completa
+  com IA usando prompt neutro. Corrige o problema observado onde imagens
+  não vinham porque cada prompt individual devolvia 0 resultados no banco.
+  Pipeline agora passa `keyword` e `quantidade: 3` em vez de
+  `prompts: [...artigo.imagens_prompts]`.
+  (2) **Bloco 4 (links)** — removido `"sobre"` de `SLUGS_EVITAR` em
+  `steps/links.ts` — Python não bloqueia páginas "Sobre" que costumam
+  ser páginas-pilar úteis pra link building.
+  (3) **Bloco 10 (`/api/historico/:id/docx`)** — usa `item.slug` do
+  banco primeiro (fonte confiável, igual Python), com `post_url.split`
+  só como fallback. Também amplia `status` da busca WP pra incluir
+  rascunhos, pendings e privados.
+  (4) **Bloco 10 (`/api/historico/:id/publicar`)** — status final agora
+  é `"publicado"` (paridade com Python), não `"concluido"`.
+  (5) **Bloco 15 (HistoricoView)** — `STATUS_STYLE` aceita ambos
+  `"publicado"` e `"concluido"` como sinônimos + adiciona `"agendado"`.
+  (6) **Bloco 15 (NovoArtigoView)** — removido filtro
+  `sites.filter(s => s.plugin)` que escondia sites conectados mas ainda
+  não testados. Python mostra todos os sites; agora TS também.
+  (7) **Bloco 15 (SitesView)** — adicionados botões "Editar" e "Remover"
+  ausentes na paridade com Python. Editar abre modal com nome (a URL
+  fica read-only porque o backend PUT não aceita alterar url — segurança
+  do plugin). Remover usa confirmação inline em 2 cliques (`window.confirm`
+  bloqueado pelo Tauri).
+  (8) **Bug latente em `SitesView.PromptModal`** — `blogFetch<BlogSite>`
+  em `PUT /api/sites/:id` estava tipado errado; backend devolve
+  `{site: BlogSite}` (envelope) e `onSaved(next)` propagava um objeto
+  sem `.id`/`.url`, corrompendo a lista. Trocado por
+  `blogFetch<{site: BlogSite}>` + `resposta.site`.
+- ✅ 📋 **Comparação COMPLETA Python vs TS+React — 2026-07-03.**
+  Usuário pediu comparação exaustiva do app inteiro (backend + frontend
+  + plugin + DB). Documento em `tng-demand-hub/COMPARACAO_PYTHON_VS_TS.md`
+  com 17 blocos cobrindo cada arquivo. Achados críticos:
+  (a) Bloco 4 links: TS pula "sobre" (Python não). (b) Bloco 6/8 imagens:
+  TS faz N buscas no Magnific vs 1 no Python. (c) Bloco 10 `/historico/:id/docx`:
+  TS usa `post_url.split` vs Python usa `item.slug`. (d) Bloco 11 chave
+  Gemini: TS grava em `settings.json` vs Python usa keyring do SO (viola
+  RNF-08/09). (e) Bloco 15: TS filtra sites por `plugin=true` na tela
+  Novo Artigo, Python mostra todos. (f) Bloco 15: TS não tem UI de
+  editar nome/URL de site. Achados de paridade OK: Bloco 5 RankMath
+  (falso alarme — os campos `title/description/focus_keyword` batem no
+  payload TS, só divergem no shape da API interna), Bloco 12 Magnific
+  (persistência do token 1:1), Bloco 17 plugin WP (byte a byte
+  idêntico). Plugin verificado via diff — zero bytes de diferença.
+- ✅ 🐛 **Gemini: desembrulhar wrappers + log de keys ausentes — 2026-07-03.**
+  Ao rodar geração real, `parseEValidar` deu `O texto gerado veio
+  incompleto (faltou: title, meta_description, slug, content_html)`.
+  Sinal clássico do modelo aninhar a resposta em wrapper (`{"artigo": {...}}`,
+  `{"output": {...}}`) apesar do prompt pedir top-level. Adicionada
+  `_talvezDesembrulhar(obj, wrappers)` que detecta wrappers conhecidos
+  (`artigo`, `article`, `output`, `response`, `resultado`, `data`) OU
+  qualquer objeto com uma única chave apontando pra outro objeto, e usa
+  o inner como fonte. `logSeguro` agora dumpa as keys presentes + amostra
+  dos primeiros 500 chars quando os obrigatórios faltam. Mensagem ao
+  usuário passa a incluir as keys recebidas.
+- ✅ 🐛 **Remover `window.confirm` do botão Reconectar Magnific — 2026-07-03.**
+  `ConfigView.tsx::conectar()` usava `window.confirm(...)` — o Tauri
+  intercepta e redireciona pra `dialog.confirm` do plugin-dialog, que
+  não está autorizado nas capabilities. Console:
+  `Unhandled Promise Rejection: dialog.confirm not allowed. Command not found`.
+  Não adicionamos a capability porque isso é mudança no app principal.
+  Removido o confirm — o botão já é explícito e o texto abaixo dele
+  avisa que o navegador vai abrir.
+- ✅ 🐛 **Health-check + limpeza de zombie no `blog_sidecar_start_lazy`
+  — 2026-07-03.** Após matar o sidecar antigo externamente (`kill 91446`)
+  pra pegar o binário novo, o Rust ficou com `state.child = Some(child_morto)`
+  → próxima abertura do painel Blog responde `running: true, port: 8000`
+  sem spawn novo, e o React bate em endpoint fantasma (`Could not connect
+  to the server` em massa). Corrigido em `src-tauri/src/blog_sidecar.rs`:
+  (1) `blog_sidecar_start_lazy` agora chama `_porta_esta_viva(port)`
+  (TCP connect com timeout 500ms) antes de responder `running: true`;
+  se a porta não responde, mata o child fantasma e cai no spawn normal.
+  (2) `CommandEvent::Terminated` no handler async agora zera
+  `state.child` via `app.state::<BlogSidecarState>()` — fecha o loop
+  de zombie mesmo quando o kill vem por caminho normal. Nova feature
+  `net` em `tokio` no `Cargo.toml`.
 
 ## Sprint 20 — Painel de clientes como visualização (v0.1.11) — 2026-06-29
 

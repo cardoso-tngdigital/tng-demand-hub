@@ -1,0 +1,33 @@
+{
+  "name": "tng-blog-backend",
+  "version": "0.2.0",
+  "description": "Backend TypeScript do TNG Blog — sidecar do TNG Demand Hub. Migração do Python original.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/main.ts",
+    "start": "bun run src/main.ts",
+    "build:mac": "bun build --compile --minify --external sharp --external '@img/*' --target=bun-darwin-arm64 src/main.ts --outfile tng-blog-sidecar-aarch64-apple-darwin && bun run vendor:sharp",
+    "build:mac-x64": "bun build --compile --minify --external sharp --external '@img/*' --target=bun-darwin-x64 src/main.ts --outfile tng-blog-sidecar-x86_64-apple-darwin && bun run vendor:sharp",
+    "build:win": "bun build --compile --minify --external sharp --external '@img/*' --target=bun-windows-x64 src/main.ts --outfile tng-blog-sidecar-x86_64-pc-windows-msvc.exe && bun run vendor:sharp",
+    "vendor:sharp": "bun run scripts/vendor-sharp.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "docx": "^9.0.0",
+    "hono": "^4.6.0",
+    "jose": "^6.2.3",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}

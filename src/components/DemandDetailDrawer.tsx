@@ -7,11 +7,13 @@ import {
   buildPendingAttachment,
   categoryIconClass,
   categorize,
+  deleteAttachment,
   disposePending,
   formatBytes,
   getSignedUrl,
   listAttachments,
   pickFilesNative,
+  reorderAttachments,
   uploadAttachment,
 } from "../lib/attachments";
 import { openAttachmentPreview } from "../lib/preview";
@@ -814,6 +816,53 @@ function AttachmentsList({ demandId }: { demandId: string }) {
     setUploading(false);
   }, [demandId]);
 
+  // Exclusão de anexo (remove da lista otimista; erro vai pra uploadErrors).
+  const handleDelete = useCallback(async (a: Attachment) => {
+    const result = await deleteAttachment(a);
+    if (result.ok) {
+      setItems((prev) => (prev ? prev.filter((x) => x.id !== a.id) : prev));
+    } else {
+      setUploadErrors((prev) => [
+        ...prev,
+        `Excluir ${a.file_name}: ${result.error}`,
+      ]);
+    }
+  }, []);
+
+  // Drag-and-drop: qual item está sendo arrastado e sobre qual ele está.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+
+  // Solta `dragId` na posição de `targetId`, reordena a lista local
+  // (otimista) e persiste via RPC. Se persistir falhar, recarrega do banco.
+  const handleDrop = useCallback(
+    async (targetId: string) => {
+      const source = dragId;
+      setDragId(null);
+      setOverId(null);
+      if (!source || source === targetId || !items) return;
+
+      const atual = [...items];
+      const from = atual.findIndex((x) => x.id === source);
+      const to = atual.findIndex((x) => x.id === targetId);
+      if (from < 0 || to < 0) return;
+      const [movido] = atual.splice(from, 1);
+      atual.splice(to, 0, movido as Attachment);
+      setItems(atual);
+
+      const res = await reorderAttachments(
+        demandId,
+        atual.map((x) => x.id),
+      );
+      if (!res.ok) {
+        setUploadErrors((prev) => [...prev, `Reordenar: ${res.error}`]);
+        const { data } = await listAttachments(demandId);
+        setItems(data);
+      }
+    },
+    [dragId, items, demandId],
+  );
+
   return (
     <div className="space-y-2">
       {items === null && error === null ? (
@@ -828,6 +877,19 @@ function AttachmentsList({ demandId }: { demandId: string }) {
             <AttachmentItem
               key={a.id}
               attachment={a}
+              draggable={items!.length > 1}
+              isDragging={dragId === a.id}
+              isDragOver={overId === a.id && dragId !== a.id}
+              onDragStart={() => setDragId(a.id)}
+              onDragEnterItem={() => {
+                if (dragId && dragId !== a.id) setOverId(a.id);
+              }}
+              onDragEndItem={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
+              onDropItem={() => void handleDrop(a.id)}
+              onDelete={() => void handleDelete(a)}
               onOpenExternal={async () => {
                 const result = await openAttachmentPreview(a, items ?? [a]);
                 if (!result.ok) {
@@ -865,15 +927,34 @@ function AttachmentsList({ demandId }: { demandId: string }) {
 
 function AttachmentItem({
   attachment,
+  draggable,
+  isDragging,
+  isDragOver,
+  onDragStart,
+  onDragEnterItem,
+  onDragEndItem,
+  onDropItem,
+  onDelete,
   onOpenExternal,
 }: {
   attachment: Attachment;
+  draggable: boolean;
+  isDragging: boolean;
+  isDragOver: boolean;
+  onDragStart: () => void;
+  onDragEnterItem: () => void;
+  onDragEndItem: () => void;
+  onDropItem: () => void;
+  onDelete: () => void;
   onOpenExternal: () => void;
 }) {
   const category = categorize(attachment.file_type);
   const [expanded, setExpanded] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
+  // Confirmação inline em 2 cliques (padrão do projeto — `window.confirm`
+  // é bloqueado pelo Tauri sem capability `dialog:confirm`).
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
 
   // Áudio toca dentro do próprio item — janela nova só faz sentido pra
   // arquivos visuais (imagem, vídeo, PDF) onde o zoom/área importa.
@@ -890,25 +971,87 @@ function AttachmentItem({
   }
 
   return (
-    <li>
+    <li
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnter={onDragEnterItem}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDropItem();
+      }}
+      onDragEnd={onDragEndItem}
+      className={`relative rounded-md transition ${
+        isDragging ? "opacity-40" : ""
+      } ${isDragOver ? "ring-2 ring-tng-orange-400" : ""}`}
+    >
+      <div className="flex items-center gap-1 rounded-md bg-tng-marine-700/40 pr-8 transition hover:bg-tng-marine-700">
+        {/* Grip de arraste — pista visual de que a linha é arrastável.
+            Só aparece com >1 anexo. */}
+        {draggable && (
+          <span
+            title="Arraste para reordenar"
+            className="grid h-full cursor-grab place-items-center px-1 text-tng-marine-500 active:cursor-grabbing"
+            aria-hidden="true"
+          >
+            <i className="fa-solid fa-grip-vertical text-xs" />
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={isAudio ? () => void toggleAudio() : onOpenExternal}
+          className={`flex min-w-0 flex-1 items-center gap-2 py-2 text-left ${
+            draggable ? "" : "pl-2.5"
+          }`}
+        >
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-tng-marine-800 text-sm text-tng-marine-300">
+            <i className={categoryIconClass(category)} aria-hidden="true" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs text-tng-marine-100">{attachment.file_name}</p>
+            <p className="text-[10px] text-tng-marine-400">
+              {formatBytes(attachment.file_size_bytes)} · {attachment.file_type}
+            </p>
+          </div>
+          <span className="shrink-0 text-[11px] text-tng-marine-300">
+            {isAudio ? (expanded ? "Recolher" : "Tocar") : "Abrir"}
+          </span>
+        </button>
+      </div>
+
+      {/* Excluir — ícone de lixeira no canto superior direito. 1º clique arma
+          (vira ícone de alerta), 2º confirma; desarma sozinho em 4s. */}
       <button
         type="button"
-        onClick={isAudio ? () => void toggleAudio() : onOpenExternal}
-        className="flex w-full items-center gap-2 rounded-md bg-tng-marine-700/40 px-2.5 py-2 text-left transition hover:bg-tng-marine-700"
+        onClick={() => {
+          if (confirmandoExclusao) {
+            setConfirmandoExclusao(false);
+            onDelete();
+          } else {
+            setConfirmandoExclusao(true);
+            window.setTimeout(() => setConfirmandoExclusao(false), 4000);
+          }
+        }}
+        aria-label={confirmandoExclusao ? "Confirmar exclusão" : "Excluir anexo"}
+        title={
+          confirmandoExclusao
+            ? "Clique de novo para confirmar"
+            : "Excluir anexo"
+        }
+        className={`absolute right-1 top-1 grid h-6 w-6 place-items-center rounded text-[11px] transition ${
+          confirmandoExclusao
+            ? "bg-red-500/25 text-red-200"
+            : "text-tng-marine-500 hover:bg-red-500/15 hover:text-red-300"
+        }`}
       >
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-tng-marine-800 text-sm text-tng-marine-300">
-          <i className={categoryIconClass(category)} aria-hidden="true" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-xs text-tng-marine-100">{attachment.file_name}</p>
-          <p className="text-[10px] text-tng-marine-400">
-            {formatBytes(attachment.file_size_bytes)} · {attachment.file_type}
-          </p>
-        </div>
-        <span className="shrink-0 text-[11px] text-tng-marine-300">
-          {isAudio ? (expanded ? "Recolher" : "Tocar") : "Abrir"}
-        </span>
+        <i
+          className={`fa-solid ${
+            confirmandoExclusao ? "fa-triangle-exclamation" : "fa-trash"
+          }`}
+          aria-hidden="true"
+        />
       </button>
+
       {isAudio && expanded && (
         <div className="mt-1 rounded-md bg-tng-marine-800/60 px-2.5 py-2">
           {audioError ? (
