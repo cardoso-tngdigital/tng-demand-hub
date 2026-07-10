@@ -23,7 +23,8 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   isRegistered as gsIsRegistered,
@@ -100,27 +101,36 @@ export function PreviewScreen() {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<PreviewPayload>("preview:open", (event) => {
-      const p = event.payload;
+    // Pull-based (2026-07-10): a janela BUSCA o payload do state Rust em vez
+    // de esperar um evento — elimina a corrida que quebrava no Windows.
+    const aplicar = (p: PreviewPayload) => {
       setBundle(p);
       setCurrentIndex(p.currentIndex);
       setView(INITIAL_VIEW);
       const first = p.items[p.currentIndex];
       if (first) {
-        void getCurrentWindow()
-          .setTitle(first.name)
-          .catch(() => undefined);
+        void getCurrentWindow().setTitle(first.name).catch(() => undefined);
       }
       // Foca o container raiz pra que Esc / +/- / 0 / ←/→ funcionem antes do
       // user clicar em qualquer lugar. Quando o foco vai pro iframe do
       // PDF, esse keydown deixa de chegar — daí o botão Fechar visível.
       window.setTimeout(() => rootRef.current?.focus(), 50);
-    });
+    };
 
-    // Avisa quem chamou (em main) que o React montou e o listener acima
-    // está vivo — sem isso o evento `preview:open` emitido logo após
-    // criar a janela é entregue antes do listener registrar e se perde.
-    void emit("preview:ready");
+    const carregar = async () => {
+      try {
+        const json = await invoke<string | null>("get_preview_payload");
+        if (json) aplicar(JSON.parse(json) as PreviewPayload);
+        else console.warn("[Preview] get_preview_payload veio vazio.");
+      } catch (err) {
+        console.error("[Preview] get_preview_payload falhou:", err);
+      }
+    };
+
+    // Pull no mount (cobre a 1ª abertura) + no refresh (reaberturas com a
+    // janela já montada).
+    void carregar();
+    const unlisten = listen("preview:refresh", () => void carregar());
 
     return () => {
       void unlisten.then((fn) => fn());

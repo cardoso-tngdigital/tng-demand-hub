@@ -26,9 +26,14 @@ function App() {
 
   // Atalho pra abrir o inspetor/console em QUALQUER janela (main, capture,
   // preview) — inclusive no app empacotado (a feature `devtools` no
-  // Cargo.toml habilita em release). Serve pra depurar bugs que só aparecem
-  // fora do modo dev, como anexos não abrindo no Windows. F12 ou
-  // Ctrl+Shift+I / Cmd+Alt+I. 2026-07-10.
+  // Cargo.toml habilita em release). F12 / Ctrl+Shift+I / Cmd+Alt+I.
+  //
+  // IMPORTANTE (2026-07-10): NÃO damos `preventDefault` no F12. No Windows o
+  // WebView2 tem F12 NATIVO (que a feature devtools habilita); o
+  // preventDefault da versão anterior BLOQUEAVA esse nativo e o F12 não abria
+  // nada. Sem preventDefault, o nativo funciona no Windows e o invoke abre no
+  // macOS (que não tem F12 nativo). Caminho garantido em qualquer caso:
+  // menu do tray → "Abrir Console".
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const combo =
@@ -38,7 +43,6 @@ function App() {
           (e.key === "I" || e.key === "i")) ||
         (e.metaKey && e.altKey && (e.key === "I" || e.key === "i"));
       if (combo) {
-        e.preventDefault();
         void import("@tauri-apps/api/core").then(({ invoke }) =>
           invoke("open_devtools").catch((err) =>
             console.error("[devtools] falha ao abrir:", err),

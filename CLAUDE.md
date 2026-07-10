@@ -58,6 +58,29 @@ sprints do Blog. Pedido do usuário.
   persistir falhar, recarrega do banco. ⚠️ **Precisa aplicar a migration**
   (`supabase db push` ou dashboard) — sem ela o reorder não persiste (o resto
   funciona via fallback).
+- ✅ 🐛 **Devtools não abria no Windows — corrigido — 2026-07-10.**
+  A v0.2.0 usava um listener JS de F12 com `e.preventDefault()`. No Windows,
+  o WebView2 tem F12 NATIVO (que a feature `devtools` habilita), e o
+  `preventDefault` BLOQUEAVA esse nativo → nada abria. Fixes: (1) removido o
+  `preventDefault` (F12 nativo do WebView2 volta a funcionar; no macOS o
+  `invoke("open_devtools")` cobre, que não tem F12 nativo); (2) **item de
+  tray "Abrir Console (Devtools)"** — caminho 100% garantido, clicar num
+  menu não depende de o WebView2 deixar o F12 passar.
+- ✅ 🐛 **Anexos não abriam no Windows — reescrito o fluxo de preview — 2026-07-10.**
+  Causa: o fluxo criava a janela `preview` via JS, esperava um handshake
+  `preview:ready` e mandava o payload por `emitTo("preview:open")`. No
+  WebView2 (Windows) o React da janela monta mais devagar → o evento chegava
+  ANTES do listener e sumia; e às vezes `WebviewWindow.getByLabel` voltava
+  null → a janela nunca dava `show()` → "nada acontece". Reescrito pra ser
+  **Rust-driven + pull**: novo comando `open_preview_window(payload_json)`
+  guarda o payload num `PreviewPayloadStore` (state) e cria+mostra+foca+
+  centraliza a janela toda no Rust (mais confiável que orquestrar via JS); a
+  `PreviewScreen` BUSCA o payload via `get_preview_payload` no mount (e no
+  evento `preview:refresh` pra reaberturas) — sem corrida de evento.
+  `lib/preview.ts` virou uma chamada só (`invoke open_preview_window`).
+  Também: CSP `frame-src` ganhou `https://*.supabase.co` pra o PDF renderizar
+  no `<iframe>` (antes só `'self' blob:` — bloqueava). Refatorou o fluxo
+  compartilhado Mac+Windows: **testar nos dois** após atualizar.
 
 ---
 

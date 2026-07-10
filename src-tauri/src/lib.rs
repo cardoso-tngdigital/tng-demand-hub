@@ -19,13 +19,21 @@
 // =============================================================================
 
 use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU8, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+
+// Guarda o payload da preview (JSON) pra a janela `preview` BUSCAR quando
+// montar — pull em vez de push por evento. Motivo: no Windows (WebView2) a
+// janela demora mais pra montar o React, então o `emitTo("preview:open")`
+// disparado logo após criar chegava ANTES do listener existir e o payload
+// se perdia (anexo "não abria"). Com pull, a janela lê o payload na hora que
+// está pronta — sem corrida. 2026-07-10.
+struct PreviewPayloadStore(Mutex<Option<String>>);
 
 mod blog_sidecar;
 use blog_sidecar::{
@@ -491,6 +499,40 @@ fn ensure_preview_window_cmd(app: tauri::AppHandle) {
     let _ = ensure_preview_window(&app);
 }
 
+// Abre (cria se preciso) a janela `preview` com o anexo, TUDO no Rust:
+// guarda o payload, garante a janela, mostra + desminimiza + foca + centraliza,
+// e sinaliza `preview:refresh` (pra quando a janela já estava aberta re-puxar).
+// Concentrar isso no Rust é mais confiável que orquestrar via JS (getByLabel
+// no WebView2 às vezes voltava null → a janela nunca era mostrada). 2026-07-10.
+#[tauri::command]
+fn open_preview_window(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, PreviewPayloadStore>,
+    payload_json: String,
+) -> Result<(), String> {
+    if let Ok(mut guard) = store.0.lock() {
+        *guard = Some(payload_json);
+    }
+    let window = ensure_preview_window(&app)
+        .ok_or_else(|| "Não foi possível criar a janela de pré-visualização.".to_string())?;
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    let _ = window.center();
+    // Best-effort: se a janela já estava montada, isso a faz re-buscar o
+    // payload. Na 1ª criação o React lê via pull no mount (get_preview_payload).
+    let _ = app.emit_to("preview", "preview:refresh", ());
+    Ok(())
+}
+
+// A janela `preview` chama isto ao montar (e no `preview:refresh`) pra buscar
+// o payload atual. Clona (não consome) — evita corrida entre o pull do mount
+// e o do refresh.
+#[tauri::command]
+fn get_preview_payload(store: tauri::State<'_, PreviewPayloadStore>) -> Option<String> {
+    store.0.lock().ok().and_then(|guard| guard.clone())
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -505,12 +547,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(BlogSidecarState::new())
+        .manage(PreviewPayloadStore(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             hide_capture_window,
             set_tray_badge,
             read_file_bytes,
             write_file_bytes,
             open_devtools,
+            open_preview_window,
+            get_preview_payload,
             set_capture_hotkey,
             set_capture_double_tap,
             ensure_capture_window_cmd,
@@ -560,12 +605,22 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            // Caminho GARANTIDO pra abrir o console (devtools) — clicar num
+            // item de menu funciona mesmo quando o WebView2 do Windows engole
+            // o F12 antes do JS. 2026-07-10.
+            let console_item = MenuItem::with_id(
+                app,
+                "console",
+                "Abrir Console (Devtools)",
+                true,
+                None::<&str>,
+            )?;
             let separador = tauri::menu::PredefinedMenuItem::separator(app)?;
             let sair_item = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
 
             let menu = Menu::with_items(
                 app,
-                &[&abrir_item, &capturar_item, &separador, &sair_item],
+                &[&abrir_item, &capturar_item, &console_item, &separador, &sair_item],
             )?;
 
             let _tray = TrayIconBuilder::with_id("main-tray")
@@ -581,6 +636,14 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_main_window(app),
                     "capture" => show_capture_window(app),
+                    "console" => {
+                        // Abre o devtools da janela main. Gated pela feature
+                        // `devtools` (habilitada no Cargo.toml) — no-op sem ela.
+                        #[cfg(any(debug_assertions, feature = "devtools"))]
+                        if let Some(w) = app.get_webview_window("main") {
+                            w.open_devtools();
+                        }
+                    }
                     "quit" => {
                         app.exit(0);
                     }
