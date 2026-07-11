@@ -442,6 +442,13 @@ fn ensure_preview_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow>
     if let Some(window) = app.get_webview_window("preview") {
         return Some(window);
     }
+    // Construímos JÁ visível e focada. Antes era `.visible(false).focused(false)`
+    // + `.show()` depois — mas no Windows o foreground lock não deixa um
+    // `show()`/`set_focus()` numa janela recém-criada escondida subir pra frente
+    // da main: ela abria ATRÁS (ou não pintava) e o usuário não via nada, sem
+    // erro nenhum. Nascer visível+focada faz o Windows tratar como nova janela
+    // de foreground (caminho confiável pra aparecer). No macOS é indiferente
+    // (a janela é destruída ao fechar, então não vaza pro AltTab). 2026-07-10.
     match WebviewWindowBuilder::new(
         app,
         "preview",
@@ -452,8 +459,8 @@ fn ensure_preview_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow>
     .min_inner_size(480.0, 360.0)
     .center()
     .shadow(true)
-    .visible(false)
-    .focused(false)
+    .visible(true)
+    .focused(true)
     .build()
     {
         Ok(window) => Some(window),
@@ -509,20 +516,42 @@ fn open_preview_window(
     app: tauri::AppHandle,
     store: tauri::State<'_, PreviewPayloadStore>,
     payload_json: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     if let Ok(mut guard) = store.0.lock() {
         *guard = Some(payload_json);
     }
+    // Se já existia, é reaproveitamento (raro — a janela é destruída ao fechar);
+    // senão `ensure_preview_window` acabou de criar já visível+focada.
+    let existed = app.get_webview_window("preview").is_some();
     let window = ensure_preview_window(&app)
         .ok_or_else(|| "Não foi possível criar a janela de pré-visualização.".to_string())?;
     let _ = window.show();
     let _ = window.unminimize();
-    let _ = window.set_focus();
+    // No Windows o foreground lock impede um simples show()/set_focus() de
+    // trazer a janela pra frente da main — ela abre ATRÁS e o usuário não vê
+    // nada (sem erro). O toggle always_on_top força a subida no z-order e
+    // depois solta, pra ela voltar a se comportar como janela normal.
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_focus();
+        let _ = window.set_always_on_top(false);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window.set_focus();
+    }
     let _ = window.center();
     // Best-effort: se a janela já estava montada, isso a faz re-buscar o
     // payload. Na 1ª criação o React lê via pull no mount (get_preview_payload).
     let _ = app.emit_to("preview", "preview:refresh", ());
-    Ok(())
+    // Diagnóstico visível no console da MAIN (a da preview é inacessível se ela
+    // não aparecer): existiu antes? o Windows a reporta visível depois do show?
+    Ok(format!(
+        "existed={} visible_after={}",
+        existed,
+        window.is_visible().unwrap_or(false)
+    ))
 }
 
 // A janela `preview` chama isto ao montar (e no `preview:refresh`) pra buscar

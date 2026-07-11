@@ -70,7 +70,14 @@ export async function openAttachmentPreview(
   try {
     console.log("[preview] open_preview_window — itens:", items.length);
     // O Rust guarda o payload, cria/mostra/foca a janela e sinaliza refresh.
-    await invoke("open_preview_window", { payloadJson: JSON.stringify(payload) });
+    // Retorna um diagnóstico ("existed=.. visible_after=..") — logado aqui
+    // porque o console da própria janela preview é inacessível se ela não
+    // aparecer. Se visible_after=true mas nada aparece → z-order/off-screen;
+    // se false → o show() não pegou.
+    const status = await invoke<string>("open_preview_window", {
+      payloadJson: JSON.stringify(payload),
+    });
+    console.log("[preview] open_preview_window ok →", status);
     return { ok: true };
   } catch (err) {
     console.error("[preview] open_preview_window falhou:", err);

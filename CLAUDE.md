@@ -95,6 +95,47 @@ sprints do Blog. Pedido do usuário.
   Versão bumpada em package.json + tauri.conf.json + Cargo.toml. Validado em
   dev no Mac antes de subir (preview abre, setas andam 1-a-1); Windows a
   validar no app instalado.
+- ✅ 🐛 **Link no comentário da demanda não abria — corrigido — 2026-07-10.**
+  Membro escreveu um link num comentário; clicar não abria nada e o console
+  mostrava `Command plugin:shell|open not allowed by ACL`. Causa: o comentário
+  é rich text renderizado via `dangerouslySetInnerHTML` e as âncoras saem com
+  `target="_blank"` (config do `RichTextEditor`). Sem `onClick`, o WebView
+  tenta rotear a "nova janela" pelo `plugin:shell|open` — que NÃO está na ACL
+  (só `shell:allow-execute` do sidecar e `shell:allow-kill` estão). Fix
+  consistente com o resto do app: `CommentItem` (`CommentsThread.tsx`) ganhou
+  `handleCommentLinkClick` no `div` do comentário — intercepta o clique na
+  âncora, `preventDefault` e abre via `openUrl` (plugin `opener`, já liberado
+  em `opener:default`). NÃO alarguei a ACL do `shell`. `ClientCommentsThread`
+  não renderiza HTML com links, então não tinha o bug.
+- ✅ 🐛 **Anexos AINDA não abriam no Windows — 2ª correção (foreground lock) — 2026-07-10.**
+  Depois da reescrita Rust-driven da v0.2.1, o membro no Windows ainda não via
+  nada ao clicar. Pista decisiva do console (devtools já funcionando): aparecia
+  só o log `[preview] open_preview_window — itens: N` (de `preview.ts`, ANTES
+  do invoke) e **nenhum erro** — ou seja, o `invoke` resolveu com sucesso, o
+  Rust criou a janela e retornou `Ok`, mas ela não aparecia. Diagnóstico:
+  `ensure_preview_window` criava a janela `.visible(false).focused(false)` e o
+  `open_preview_window` fazia `.show()`+`.set_focus()` depois — mas o
+  **foreground lock do Windows** não deixa `show()`/`set_focus()` numa janela
+  recém-criada escondida subir pra frente da main; ela abria ATRÁS (ou não
+  pintava) e ninguém via, sem erro. No macOS o modelo de foco é outro, por
+  isso funcionava lá. Fixes (`lib.rs`): (1) `ensure_preview_window` nasce
+  `.visible(true).focused(true)` — Windows trata como nova janela de foreground
+  (caminho confiável pra aparecer); (2) em `open_preview_window`, no Windows,
+  toggle `set_always_on_top(true)`→`set_focus()`→`set_always_on_top(false)` pra
+  forçar o z-order; (3) o comando agora retorna diagnóstico
+  `existed=.. visible_after=..` que `preview.ts` loga no console da MAIN (o
+  console da própria janela preview é inacessível se ela não aparece). ⚠️ Só
+  reproduz no Windows empacotado — **validar via release** (v0.2.2). No macOS
+  segue funcionando (janela é destruída ao fechar, sem vazar pro AltTab).
+- ✅ ✨ **Release v0.2.2 publicado — 2026-07-10.** Tag `v0.2.2` → build Mac
+  (aarch64+x64) + Windows via GitHub Actions. Junta dois fixes: (1) link no
+  comentário da demanda que não abria (`plugin:shell|open not allowed by ACL`
+  → roteado pelo `openUrl`); (2) 2ª tentativa dos anexos no Windows (foreground
+  lock — janela preview nasce visível+focada + toggle always_on_top). Versão
+  bumpada em package.json + tauri.conf.json + Cargo.toml. Sanity check no Mac
+  ok (preview abre, setas 1-a-1); **anexos no Windows a validar no app
+  instalado** — se ainda falhar, o log `visible_after=..` no console aponta o
+  próximo passo.
 
 ---
 

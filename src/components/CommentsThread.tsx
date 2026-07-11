@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   createComment,
   deleteComment,
@@ -164,6 +171,22 @@ export function CommentsThread({
   );
 }
 
+// Links dentro do HTML do comentário são renderizados com target="_blank"
+// (config do RichTextEditor). Sem interceptar, o clique faz o WebView tentar
+// abrir "nova janela" via `plugin:shell|open`, que NÃO está liberado na ACL —
+// o link não abre e o console mostra "not allowed by ACL". Roteamos pelo
+// `openUrl` (plugin opener, liberado em opener:default), mesmo caminho do
+// resto do app. Funciona igual no macOS e no Windows. 2026-07-10.
+function handleCommentLinkClick(e: ReactMouseEvent<HTMLDivElement>) {
+  const anchor = (e.target as HTMLElement | null)?.closest("a");
+  const href = anchor?.getAttribute("href");
+  if (!href) return;
+  e.preventDefault();
+  void openUrl(href).catch((err) =>
+    console.error("[CommentsThread] openUrl falhou:", err),
+  );
+}
+
 function CommentItem({
   comment,
   authorName,
@@ -198,6 +221,7 @@ function CommentItem({
       </div>
       <div
         className="prose-rich text-xs leading-relaxed text-tng-marine-100"
+        onClick={handleCommentLinkClick}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </li>
