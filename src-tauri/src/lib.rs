@@ -511,8 +511,16 @@ fn ensure_preview_window_cmd(app: tauri::AppHandle) {
 // e sinaliza `preview:refresh` (pra quando a janela já estava aberta re-puxar).
 // Concentrar isso no Rust é mais confiável que orquestrar via JS (getByLabel
 // no WebView2 às vezes voltava null → a janela nunca era mostrada). 2026-07-10.
+//
+// `async` é OBRIGATÓRIO (2026-07-12): comando síncrono roda na MAIN thread, e
+// criar uma WebView2 (`build()`) exige o event loop rodando pra a controller
+// inicializar. Síncrono na main thread => deadlock: o casco da janela aparece
+// BRANCO, a WebView2 nunca inicializa (nem o F12 nativo abre) e o comando nunca
+// retorna. Async faz o Tauri rodar isto numa worker thread: o `build()` despacha
+// a criação pro event loop (que fica livre) e completa. No macOS a WKWebView
+// nasce síncrona, então lá o bug não aparecia — só no Windows.
 #[tauri::command]
-fn open_preview_window(
+async fn open_preview_window(
     app: tauri::AppHandle,
     store: tauri::State<'_, PreviewPayloadStore>,
     payload_json: String,

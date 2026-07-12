@@ -136,6 +136,24 @@ sprints do Blog. Pedido do usuário.
   ok (preview abre, setas 1-a-1); **anexos no Windows a validar no app
   instalado** — se ainda falhar, o log `visible_after=..` no console aponta o
   próximo passo.
+- ✅ 🐛 **Anexos no Windows — 3ª correção (comando `async` / deadlock da main
+  thread) — 2026-07-12.** Testando em modo dev numa VM Windows 11 ARM64 (UTM no
+  M1), o bug reproduziu: ao clicar no anexo abria uma janela **branca** e nada
+  mais. Pistas: (1) no console da MAIN aparecia `[preview] open_preview_window —
+  itens: N` mas **nunca** a linha seguinte `open_preview_window ok →` — ou seja,
+  o `invoke` **não retornava** (comando travado); (2) nem o **F12 nativo** abria
+  o devtools da janela branca — a WebView2 dela **nunca inicializou**. Como o
+  roteamento é por label (`windowLabel === "preview"` → `PreviewScreen`) e a
+  `PreviewScreen` mesmo vazia pinta fundo azul-marinho, branco = React não
+  montou = webview morta. Causa-raiz: `open_preview_window` era um comando
+  **síncrono**, e no Tauri comando síncrono roda na **main thread**; criar uma
+  WebView2 (`build()`) precisa do event loop rodando pra a controller
+  inicializar — a main thread bloqueada no comando trava isso (deadlock). No
+  macOS a `WKWebView` nasce síncrona, por isso lá nunca deu. Fix (`lib.rs`):
+  `open_preview_window` virou `async fn` — o Tauri passa a rodá-lo numa worker
+  thread, o `build()` despacha a criação pro event loop (livre) e completa.
+  Descoberto graças ao workflow novo de testar em dev no Windows ANTES de
+  publicar release.
 
 ---
 
