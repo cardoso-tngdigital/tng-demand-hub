@@ -154,6 +154,13 @@ sprints do Blog. Pedido do usuário.
   thread, o `build()` despacha a criação pro event loop (livre) e completa.
   Descoberto graças ao workflow novo de testar em dev no Windows ANTES de
   publicar release.
+- ✅ ✨ **Release v0.2.3 publicado — 2026-07-13.** Tag `v0.2.3` → build Mac
+  (aarch64+x64) + Windows via GitHub Actions. Publica a correção `async` do
+  `open_preview_window` (acima) que fecha o bug dos anexos no Windows. **Primeira
+  release validada em dev nos DOIS SOs antes de publicar**: Windows 11 ARM64 na
+  VM (anexos abrem, navegação por setas ok) + macOS (`npm run tauri dev`, anexo
+  ok), pelo workflow novo. Versão bumpada em package.json + tauri.conf.json +
+  Cargo.toml + Cargo.lock.
 
 ---
 
