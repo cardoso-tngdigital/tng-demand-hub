@@ -238,6 +238,7 @@ export type DemandChange = {
  */
 export function subscribeToDemands(
   onChange: (event: "INSERT" | "UPDATE" | "DELETE", change: DemandChange) => void,
+  onStatus?: (connected: boolean) => void,
 ): () => void {
   const channel = supabase
     .channel("public:demands")
@@ -251,7 +252,15 @@ export function subscribeToDemands(
         if (newRow || oldRow) onChange(eventType, { new: newRow, old: oldRow });
       },
     )
-    .subscribe();
+    // O status reflete a saúde REAL do canal: SUBSCRIBED = ao vivo; qualquer
+    // outro (CHANNEL_ERROR/TIMED_OUT/CLOSED) = caiu. Isso alimenta o indicador
+    // "ao vivo/offline" no header — antes ele era fixo em `true` (enganoso).
+    // O realtime-js reconecta sozinho no drop; a reautenticação do JWT fica
+    // no client.ts (setAuth em foco/rede/refresh de token).
+    .subscribe((status) => {
+      // String(status) evita atrito de tipo com o enum REALTIME_SUBSCRIBE_STATES.
+      onStatus?.(String(status) === "SUBSCRIBED");
+    });
 
   return () => {
     void supabase.removeChannel(channel);

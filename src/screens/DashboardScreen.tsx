@@ -346,44 +346,51 @@ export function DashboardScreen() {
   // ele (assignee/created_by). Toda a matriz de decisão fica em
   // notificationDecider.ts (testada à parte).
   useEffect(() => {
-    const unsubscribe = subscribeToDemands((event, change) => {
-      setDemands((prev) => {
-        if (event === "INSERT" && change.new) {
-          if (prev.some((d) => d.id === change.new!.id)) return prev;
-          return [change.new, ...prev];
-        }
-        if (event === "UPDATE" && change.new) {
-          return prev.map((d) => (d.id === change.new!.id ? change.new! : d));
-        }
-        if (event === "DELETE" && change.old) {
-          return prev.filter((d) => d.id !== change.old!.id);
-        }
-        return prev;
-      });
+    const unsubscribe = subscribeToDemands(
+      (event, change) => {
+        setDemands((prev) => {
+          if (event === "INSERT" && change.new) {
+            if (prev.some((d) => d.id === change.new!.id)) return prev;
+            return [change.new, ...prev];
+          }
+          if (event === "UPDATE" && change.new) {
+            return prev.map((d) => (d.id === change.new!.id ? change.new! : d));
+          }
+          if (event === "DELETE" && change.old) {
+            return prev.filter((d) => d.id !== change.old!.id);
+          }
+          return prev;
+        });
 
-      const notif = decideDemandNotification({
-        event,
-        change,
-        me: currentUserIdRef.current,
-        role: isAdminRef.current ? "admin" : "member",
-        wasLocalChange,
-        prefs: notificationPrefsRef.current,
-        ctx: {
-          clientName: (id) =>
-            id
-              ? clientsRef.current.find((c) => c.id === id)?.name
-              : undefined,
-          profileName: (id) =>
-            id
-              ? profilesRef.current.find((p) => p.id === id)?.full_name
-              : undefined,
-        },
-      });
-      if (notif) {
-        void notifyAboutDemand(notif.title, notif.body, notif.demandId);
-      }
-    });
-    setRealtimeConnected(true);
+        const notif = decideDemandNotification({
+          event,
+          change,
+          me: currentUserIdRef.current,
+          role: isAdminRef.current ? "admin" : "member",
+          wasLocalChange,
+          prefs: notificationPrefsRef.current,
+          ctx: {
+            clientName: (id) =>
+              id
+                ? clientsRef.current.find((c) => c.id === id)?.name
+                : undefined,
+            profileName: (id) =>
+              id
+                ? profilesRef.current.find((p) => p.id === id)?.full_name
+                : undefined,
+          },
+        });
+        if (notif) {
+          void notifyAboutDemand(notif.title, notif.body, notif.demandId);
+        }
+      },
+      (connected) => {
+        // Status REAL do canal (SUBSCRIBED vs caiu). Quando o realtime cai e a
+        // reautenticação/reconexão do client.ts o traz de volta, o indicador
+        // volta pra "ao vivo" sozinho — sem depender de reload.
+        setRealtimeConnected(connected);
+      },
+    );
     return () => {
       setRealtimeConnected(false);
       unsubscribe();

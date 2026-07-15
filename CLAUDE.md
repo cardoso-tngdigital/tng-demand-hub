@@ -161,6 +161,38 @@ sprints do Blog. Pedido do usuário.
   VM (anexos abrem, navegação por setas ok) + macOS (`npm run tauri dev`, anexo
   ok), pelo workflow novo. Versão bumpada em package.json + tauri.conf.json +
   Cargo.toml + Cargo.lock.
+- ✅ 🐛 **Notificações pararam de chegar (realtime não entregava a clientes
+  autenticados) — 2026-07-15.** Sintoma: admin e membro deixaram de receber
+  QUALQUER notificação; a lista também não atualizava sozinha, só após reload.
+  Diagnóstico (contra o Supabase real, read-only): (1) server-side OK — o
+  `compute_due_notifications()` via pg_cron rodou e gerou registros; (2) infra de
+  realtime OK — com a **service role** (RLS bypassed) os `postgres_changes` de
+  `demands` **chegavam**; (3) o cliente **autenticado** NÃO recebia (confirmado
+  pelo usuário: lista só atualiza após reload); (4) a RLS (`is_active_member()`
+  via `auth.uid()`) está sã e **inalterada**, e o código de notificação está
+  **inalterado desde a v0.1.11** (quando funcionava). Causa-raiz: os
+  `postgres_changes` passam pela RLS avaliada com o JWT presente no **socket do
+  realtime** (não o da sessão HTTP). O `access_token` expira (~1h) e o socket
+  reconecta após o Mac dormir / a rede cair; se ficar com JWT vencido,
+  `auth.uid()` vira null → a RLS bloqueia TODOS os eventos → o realtime "morre"
+  em silêncio até um reload. (Provável gatilho: o Supabase apertou a checagem de
+  RLS no realtime — antes era leniente com token vencido.) Fix (cliente, portanto
+  resolvido via release): `src/lib/supabase/client.ts` reautentica o socket
+  (`realtime.setAuth`) no `onAuthStateChange` (inclui TOKEN_REFRESHED) e em
+  `focus`/`online`/`visibilitychange` — momentos em que o socket pode ter
+  reconectado com token velho. Também: `subscribeToDemands` agora expõe o status
+  real do canal e o indicador "ao vivo/offline" no header reflete isso (antes era
+  fixo `true`, enganoso), então dá pra VER o realtime cair e voltar; e
+  `NotificationSettings` ganhou botão "Enviar notificação de teste" + status de
+  permissão, pra isolar o caminho nativo do SO do caminho do realtime no app
+  instalado. Diagnóstico e correção sem alterar nada no Supabase (RLS mantida).
+- ✅ ✨ **Release v0.2.4 publicada — 2026-07-15.** Tag `v0.2.4` → build Mac
+  (aarch64+x64) + Windows via GitHub Actions. Publica a correção do realtime das
+  notificações (acima). Não deu pra validar em dev (o bug só aparece com JWT
+  vencido, ~1h de app aberto / após dormir), então a validação é no app instalado
+  com os diagnósticos embutidos: indicador "ao vivo/offline" real + botão de
+  notificação de teste. Versão bumpada em package.json + tauri.conf.json +
+  Cargo.toml + Cargo.lock.
 
 ---
 

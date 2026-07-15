@@ -12,6 +12,7 @@ import {
   type NotificationPrefs,
 } from "../types/database";
 import { getMyProfile, updateMyNotifications } from "../lib/profiles";
+import { ensureNotificationPermission, notify } from "../lib/notifications";
 
 export function NotificationSettings({
   open,
@@ -24,6 +25,10 @@ export function NotificationSettings({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(
+    null,
+  );
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -63,6 +68,32 @@ export function NotificationSettings({
     // `mentions` é opcional no tipo — fallback pra true quando ausente.
     const current = prefs[key] ?? true;
     void save({ ...prefs, [key]: !current });
+  }
+
+  // Dispara uma notificação nativa de teste. Isola o caminho do SO (permissão +
+  // banner) do caminho do realtime: se o teste aparece, o sistema de
+  // notificações funciona e um eventual problema está na entrega em tempo real.
+  async function sendTest() {
+    setTesting(true);
+    setTestMsg(null);
+    const granted = await ensureNotificationPermission();
+    if (!granted) {
+      setTestMsg({
+        ok: false,
+        text: "Permissão negada pelo sistema. Ative as notificações do app 'TNG Sites - Demandas' nas configurações do seu sistema operacional.",
+      });
+      setTesting(false);
+      return;
+    }
+    await notify(
+      "TNG Sites - Demandas",
+      "Notificação de teste — se você está vendo isto, o sistema de notificações está funcionando. ✅",
+    );
+    setTestMsg({
+      ok: true,
+      text: "Enviada! Se o banner não apareceu, verifique as notificações do app nas configurações do sistema operacional.",
+    });
+    setTesting(false);
   }
 
   return (
@@ -129,6 +160,28 @@ export function NotificationSettings({
               />
             </>
           )}
+          <div className="border-t border-tng-marine-700 pt-3">
+            <button
+              type="button"
+              onClick={() => void sendTest()}
+              disabled={testing}
+              className="w-full rounded-md border border-tng-marine-600 bg-tng-marine-700/40 px-3 py-2 text-xs font-medium text-tng-marine-100 transition hover:border-tng-orange-400 hover:text-white disabled:opacity-50"
+            >
+              <i className="fa-solid fa-bell mr-2" aria-hidden="true" />
+              {testing ? "Enviando…" : "Enviar notificação de teste"}
+            </button>
+            {testMsg && (
+              <p
+                className={`mt-2 rounded-md border px-3 py-2 text-[10px] ${
+                  testMsg.ok
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                }`}
+              >
+                {testMsg.text}
+              </p>
+            )}
+          </div>
           {error && (
             <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
               {error}
