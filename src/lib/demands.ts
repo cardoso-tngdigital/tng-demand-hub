@@ -236,12 +236,22 @@ export type DemandChange = {
  * comparar valores anteriores (necessário para detectar reatribuições).
  * Retorna função para desinscrever.
  */
+// Sequência pra dar um topic ÚNICO a cada subscription. Na recuperação do
+// realtime (DashboardScreen recria a subscription), o canal antigo é removido
+// de forma assíncrona enquanto o novo é criado — se ambos usassem o mesmo topic
+// ("public:demands"), o `phx_leave` do antigo podia chegar depois do `phx_join`
+// do novo e derrubar o canal recém-criado (indicador ficaria preso em offline
+// de novo). Topic único elimina a corrida. O nome do topic é irrelevante pro
+// postgres_changes — o roteamento dos eventos vem do binding (schema/table),
+// não do topic.
+let demandsChannelSeq = 0;
+
 export function subscribeToDemands(
   onChange: (event: "INSERT" | "UPDATE" | "DELETE", change: DemandChange) => void,
   onStatus?: (connected: boolean) => void,
 ): () => void {
   const channel = supabase
-    .channel("public:demands")
+    .channel(`public:demands:${++demandsChannelSeq}`)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "demands" },

@@ -193,6 +193,52 @@ sprints do Blog. Pedido do usuário.
   com os diagnósticos embutidos: indicador "ao vivo/offline" real + botão de
   notificação de teste. Versão bumpada em package.json + tauri.conf.json +
   Cargo.toml + Cargo.lock.
+- ✅ 🐛 **Clicar na notificação não abria a demanda — 2026-07-15.** Depois que
+  as notificações voltaram (v0.2.4), o usuário testou Mac→Windows: criou demanda
+  no Mac atribuída a uma conta de teste, a notificação chegou no Windows, mas
+  clicar nela **não abria** a demanda — nos DOIS SOs. Causa: no desktop
+  (macOS/Windows) o `tauri-plugin-notification` **não entrega** o clique no corpo
+  da notificação como evento (só o mobile emite `onAction`); o app usa "app ganhou
+  foco logo após uma notificação" como PROXY (`subscribeToNotificationClick` em
+  `notifications.ts`). Dois furos: (1) a janela de correlação era só **8s** —
+  entre a notificação chegar (latência do realtime) e o usuário clicar (ainda mais
+  cross-machine, lendo o banner antes) passavam >8s → o `pending` expirava → "clico
+  e nada"; (2) com a janela main **escondida na bandeja** (fechada no X, Sprint 18),
+  o clique ativa o app mas a janela não reaparece e o foco nem dispara. Fixes:
+  (a) `CLICK_WINDOW_MS` 8s → **60s** (`notifications.ts`); (b) `notifyAboutDemand`
+  só arma o `pending` quando o app **não** está focado no momento
+  (`document.hasFocus()` falso) — se já estava focado, clicar no banner não gera
+  transição de foco e um pending armado abriria a demanda ERRADA no próximo foco
+  não relacionado (falso positivo eliminado); (c) `lib.rs` passou a tratar
+  `RunEvent::Reopen` (macOS) chamando `show_main_window` — reativar o app (Dock e,
+  na maioria dos casos, clicar na notificação) faz a janela reaparecer da
+  bandeja; ao ganhar foco, o proxy abre a demanda pendente. Caminho garantido pra
+  janela escondida continua sendo o ícone no tray/Dock ("Abrir") → mostra a janela
+  → foco → abre a demanda pendente (agora dentro dos 60s). ⚠️ Limitação de SO que
+  permanece: sem evento de clique real no desktop, se o clique na notificação não
+  ativar/mostrar a janela, o proxy não dispara — daí o fallback pelo tray/Dock.
+- ✅ 🐛 **Indicador "offline" preso / realtime não recuperava sozinho —
+  2026-07-15.** No mesmo teste, ao voltar pro Mac o app aparecia "offline". A
+  partir da v0.2.4 o indicador reflete o estado REAL do canal (antes era fixo em
+  verde), então cair pra "offline" quando a conexão dropou (Mac ocioso/dormindo
+  durante o uso da VM) está correto — mas ele **não voltava** pra "ao vivo"
+  sozinho. A reautenticação do socket (v0.2.4, `setAuth` no foco/rede) reempurra o
+  JWT, mas um canal já travado em estado de erro **não re-assina** só com isso.
+  Fix (`DashboardScreen.tsx`): novo efeito de recuperação — quando o app volta ao
+  foco / a rede volta / a aba fica visível E o indicador está offline
+  (`realtimeConnectedRef`), faz **bump num `realtimeNonce`** que está nas deps do
+  efeito de subscription → a subscription de `demands` é **recriada do zero**
+  (canal novo, join limpo) → o indicador volta pra "ao vivo" e a lista volta a
+  atualizar sem reload. Só age quando offline (evita churn quando já está ao vivo).
+  Também em `demands.ts`: o topic do canal virou **único por subscription**
+  (`public:demands:${seq}`) — antes era fixo `"public:demands"`, e na recriação o
+  `phx_leave` do canal antigo (removido async) podia derrubar o `phx_join` do
+  novo (mesmo topic) → indicador voltava a travar em offline. Topic único elimina
+  a corrida; o nome não afeta o postgres_changes (roteamento vem do binding).
+- ✅ ✨ **Release v0.2.5 — 2026-07-15.** Junta os 2 fixes acima (clique na
+  notificação abre a demanda + recuperação do "offline"). Como notificação não
+  dispara em dev, a validação é no app instalado. Versão bumpada em package.json +
+  tauri.conf.json + Cargo.toml + Cargo.lock.
 
 ---
 

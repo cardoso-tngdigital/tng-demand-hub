@@ -717,14 +717,25 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(|app_handle, event| match event {
             // No shutdown, mata o sidecar do Blog antes de encerrar. Sem isso,
             // sobra um processo `tng-blog-sidecar` órfão no Activity Monitor
             // / Task Manager depois do usuário fechar o app.
-            if let tauri::RunEvent::ExitRequested { .. } = event {
+            tauri::RunEvent::ExitRequested { .. } => {
                 if let Some(state) = app_handle.try_state::<BlogSidecarState>() {
                     kill_sidecar(&state);
                 }
             }
+            // macOS: reativar o app (clicar no Dock e, na maioria dos casos,
+            // clicar numa notificação) dispara Reopen. Mostramos a janela main
+            // de novo — se ela estava escondida na bandeja/menubar (fechada no
+            // X), reaparece; ao ganhar foco, o proxy de clique (notifications.ts)
+            // abre a demanda pendente. Sem isto, clicar na notificação com a
+            // janela escondida ativava o app mas nada aparecia.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                show_main_window(app_handle);
+            }
+            _ => {}
         });
 }

@@ -105,8 +105,19 @@ export function wasLocalChange(demandId: string): boolean {
 // ---------------------------------------------------------------------------
 // Correlação click → demanda
 // ---------------------------------------------------------------------------
-
-const CLICK_WINDOW_MS = 8000;
+// No desktop (macOS/Windows) o SO NÃO entrega o clique no corpo da notificação
+// como evento — só ativa/foca o app. Então usamos "o app ganhou foco logo após
+// uma notificação" como proxy de clique. Duas lições do uso real (2026-07-15):
+//   1. 8s era curto DEMAIS. Entre a notificação chegar (latência do realtime) e
+//      o usuário efetivamente clicar (às vezes noutra máquina, lendo o banner
+//      antes), passavam >8s → o pending expirava → "clico e nada abre". Subimos
+//      pra 60s: quem clica numa notificação costuma fazê-lo dentro de 1 min.
+//   2. Só armamos o pending quando o app NÃO está focado no momento da
+//      notificação. Se ele já está focado, clicar no banner não gera transição
+//      de foco (o flush nunca roda de qualquer jeito), e um pending armado
+//      abriria a demanda errada no próximo foco não relacionado (falso
+//      positivo). App em background/escondido → clicar traz o foco → abre.
+const CLICK_WINDOW_MS = 60_000;
 
 type Pending = { demandId: string; at: number };
 
@@ -117,7 +128,10 @@ export async function notifyAboutDemand(
   body: string,
   demandId: string,
 ): Promise<void> {
-  pending = { demandId, at: Date.now() };
+  const appFocused = typeof document !== "undefined" && document.hasFocus();
+  if (!appFocused) {
+    pending = { demandId, at: Date.now() };
+  }
   await notify(title, body);
 }
 

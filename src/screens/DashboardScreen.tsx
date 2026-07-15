@@ -105,6 +105,9 @@ export function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  // Bump força a subscription de realtime a se recriar do zero (recuperação
+  // quando o canal cai e fica preso em "offline" — ver efeito de recuperação).
+  const [realtimeNonce, setRealtimeNonce] = useState(0);
   const [selectedDemandId, setSelectedDemandId] = useState<string | null>(null);
 
   const [clients, setClients] = useState<ClientOption[]>([]);
@@ -340,6 +343,12 @@ export function DashboardScreen() {
   useEffect(() => {
     profilesRef.current = profiles;
   }, [profiles]);
+  // Ref do status do realtime — usado pelo efeito de recuperação (que roda em
+  // listeners de foco/rede, fora do ciclo de render).
+  const realtimeConnectedRef = useRef<boolean>(realtimeConnected);
+  useEffect(() => {
+    realtimeConnectedRef.current = realtimeConnected;
+  }, [realtimeConnected]);
 
   // Subscreve realtime de demandas + decide notificação por role via decider.
   // Admin recebe TUDO (exceto suas próprias ações); membro só o que envolve
@@ -394,6 +403,29 @@ export function DashboardScreen() {
     return () => {
       setRealtimeConnected(false);
       unsubscribe();
+    };
+  }, [realtimeNonce]);
+
+  // Recuperação do realtime: se o canal caiu (indicador "offline") e o app
+  // volta ao foco / a rede volta / a aba fica visível, recria a subscription do
+  // zero (bump no nonce). A reautenticação do socket (client.ts) reempurra o
+  // JWT, mas um canal já travado em erro não re-assina sozinho — sem isto o
+  // indicador ficava preso em "offline" e a lista parava de atualizar até um
+  // reload. Só age quando está offline (evita churn quando já está "ao vivo").
+  useEffect(() => {
+    function recoverIfDown() {
+      if (!realtimeConnectedRef.current) setRealtimeNonce((n) => n + 1);
+    }
+    function onVisible() {
+      if (document.visibilityState === "visible") recoverIfDown();
+    }
+    window.addEventListener("focus", recoverIfDown);
+    window.addEventListener("online", recoverIfDown);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", recoverIfDown);
+      window.removeEventListener("online", recoverIfDown);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
