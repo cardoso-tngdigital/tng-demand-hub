@@ -240,6 +240,69 @@ sprints do Blog. Pedido do usuário.
   dispara em dev, a validação é no app instalado. Versão bumpada em package.json +
   tauri.conf.json + Cargo.toml + Cargo.lock.
 
+## Centro de notificações in-app (criação server-side) — 2026-07-15
+
+Pedido do usuário: trazer as notificações pra DENTRO do app (sino + contador +
+popup), não só o banner efêmero do SO — que fica no painel de notificações do
+computador, mas some da tela e o usuário não vê se não abre aquele painel.
+Mudança arquitetural: a CRIAÇÃO das notificações saiu do CLIENTE
+(`notificationDecider.ts`, que só rodava com o app aberto) e foi pro SERVIDOR
+(triggers no Postgres), pra registrar o evento mesmo com o app fechado. Modelo:
+UMA linha por destinatário → "admin vê tudo" sai de graça (recebe uma linha de
+cada evento) e "lida" é só o booleano `read` da linha.
+
+- ✅ ✨ **Migration `20260715000001_notifications.sql` — 2026-07-15.** ⚠️ **PRECISA
+  SER APLICADA no Supabase** — sem ela, e com o decider antigo REMOVIDO, NENHUMA
+  notificação chega (pior que antes). Cria `public.notifications` (id, user_id,
+  demand_id, actor_id, type ∈ assigned|status|comment|mention|due|attachment,
+  title, body, read, created_at), índices ((user_id, created_at desc) + parcial
+  de não lidas), RLS (select/update/delete só do dono; SEM insert de cliente — só
+  os triggers SECURITY DEFINER inserem), e adiciona à publication
+  `supabase_realtime`.
+- ✅ ✨ **Triggers server-side de criação — 2026-07-15.** Helper
+  `_notify_demand_watchers` (responsável + criador + admins ativos, MENOS o autor
+  via `auth.uid()`, deduplicado, respeitando prefs via `_notif_pref_allows`).
+  Gatilhos: demands INSERT (criada já com responsável → `assigned`) e UPDATE
+  (mudança de responsável → `assigned`; **QUALQUER** mudança de status →
+  `status`); comments INSERT (menção tem prioridade sobre comentário);
+  attachments INSERT (só PÓS-criação: suprime anexos até 2 min após criar a
+  demanda = os da captura inicial; **1 por lote**: coalesce de 10 min; destinatário
+  = responsável + admins); bridge `demand_due_notifications` INSERT → `due`.
+  Suprimir auto-notificação (não avisar quem fez a ação) agora é server-side via
+  `auth.uid()` — não depende mais do `wasLocalChange` do cliente.
+- ✅ ✨ **`src/lib/notificationsCenter.ts` — 2026-07-15.** `listMyNotifications`,
+  `subscribeToMyNotifications` (realtime filtrado por user_id, INSERT+UPDATE+DELETE,
+  topic único por subscription), `markNotificationRead`, `markAllNotificationsRead`,
+  `clearReadNotifications`, `notificationIcon`.
+- ✅ ✨ **`src/components/NotificationsBell.tsx` — 2026-07-15.** Sino no header (ao
+  lado do "ao vivo") com badge de não lidas; popup dropdown com as notificações
+  (ícone por tipo, tempo relativo pt-BR, ponto de não lida); backdrop e Esc
+  fecham; ações "Marcar todas" e "Limpar lidas".
+- ✅ ✨ **DashboardScreen: integração + remoção do decider antigo — 2026-07-15.**
+  Assina `notifications` → dispara o banner NATIVO em cada INSERT (passando
+  `notificationId` no pending) + alimenta contador/popup. Auto-abre o popup no 1º
+  load se há não lidas. **Removidos:** `decideDemandNotification` no handler de
+  demands, `subscribeToAllCommentInserts`, `subscribeToDueNotifications` (banner
+  direto) e o estado/refs de prefs + refs de decider — o realtime de demands
+  agora só atualiza a LISTA. Regra confirmada com o usuário: **abrir a demanda por
+  navegação normal (lista/kanban/busca) NÃO marca como lida** — só clicar NA
+  NOTIFICAÇÃO (popup) ou no banner do SO marca (o proxy de foco usa o
+  `notificationId` do pending pra marcar aquela específica).
+- ✅ ✨ **`notifications.ts`: `notifyAboutDemand` + `subscribeToNotificationClick`
+  carregam `notificationId` — 2026-07-15.** Pro clique no banner do SO marcar a
+  notificação certa como lida ao abrir a demanda.
+- ✅ ✨ **Bump 0.2.5 → 0.2.6 — 2026-07-15.**
+
+**Prefs:** os toggles do `NotificationSettings` continuam respeitados server-side
+(`assigned`/`comments`/`mentions`/`due_soon`); `status` e `attachment` não têm
+toggle dedicado (sempre notificam). **Pendências conhecidas:** o popup auto-abre
+só no cold launch — ao reabrir da bandeja (sem remontar o React) o sinal é o
+contador do sino; e "marcar lida ao clicar no banner do SO" depende da mesma
+detecção por foco (se o SO não trouxer o app à frente, a notificação fica não
+lida — fail-safe, aparece no popup). O `notificationDecider.ts` e
+`subscribeToAllCommentInserts`/`subscribeToDueNotifications` ficaram como código
+morto (não removidos pra não arriscar; podem ser limpos depois).
+
 ---
 
 ## Visão geral

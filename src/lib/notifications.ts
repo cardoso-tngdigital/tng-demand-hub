@@ -119,7 +119,7 @@ export function wasLocalChange(demandId: string): boolean {
 //      positivo). App em background/escondido → clicar traz o foco → abre.
 const CLICK_WINDOW_MS = 60_000;
 
-type Pending = { demandId: string; at: number };
+type Pending = { demandId: string; notificationId?: string; at: number };
 
 let pending: Pending | null = null;
 
@@ -127,10 +127,13 @@ export async function notifyAboutDemand(
   title: string,
   body: string,
   demandId: string,
+  notificationId?: string,
 ): Promise<void> {
   const appFocused = typeof document !== "undefined" && document.hasFocus();
   if (!appFocused) {
-    pending = { demandId, at: Date.now() };
+    // notificationId permite ao proxy marcar AQUELA notificação como lida
+    // quando o clique no banner do SO traz o foco e abre a demanda.
+    pending = { demandId, notificationId, at: Date.now() };
   }
   await notify(title, body);
 }
@@ -150,7 +153,7 @@ export async function notifyAboutDemand(
  * de chamar `onClick` duas vezes para o mesmo evento.
  */
 export function subscribeToNotificationClick(
-  onClick: (demandId: string) => void,
+  onClick: (demandId: string, notificationId?: string) => void,
 ): () => void {
   let cancelled = false;
   let unlistenTauri: (() => void) | null = null;
@@ -163,7 +166,7 @@ export function subscribeToNotificationClick(
       return;
     }
     pending = null;
-    onClick(p.demandId);
+    onClick(p.demandId, p.notificationId);
   }
 
   // Via 1 — DOM

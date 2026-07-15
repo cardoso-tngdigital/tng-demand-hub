@@ -10,20 +10,20 @@ import {
   type ClientDemandCount,
 } from "../lib/demands";
 import { listAllClients } from "../lib/clients";
-import { subscribeToAllCommentInserts } from "../lib/comments";
 import {
-  bucketToLabel,
   ensureNotificationPermission,
   notifyAboutDemand,
-  subscribeToDueNotifications,
   subscribeToNotificationClick,
-  wasLocalChange,
 } from "../lib/notifications";
 import {
-  decideCommentNotification,
-  decideMentionNotification,
-  decideDemandNotification,
-} from "../lib/notificationDecider";
+  clearReadNotifications,
+  listMyNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  subscribeToMyNotifications,
+  type AppNotification,
+} from "../lib/notificationsCenter";
+import { NotificationsBell } from "../components/NotificationsBell";
 import { setTrayBadge } from "../lib/tray";
 import { htmlToPlainText, legacyToHtml } from "../lib/htmlContent";
 import { listActiveClients, listActiveProfiles, type ClientOption, type ProfileOption } from "../lib/lookups";
@@ -51,9 +51,7 @@ import type {
   DemandInfrastructure,
   DemandPriority,
   DemandStatus,
-  NotificationPrefs,
 } from "../types/database";
-import { DEFAULT_NOTIFICATION_PREFS } from "../types/database";
 import logoDark from "../assets/brand/logo-dark.png";
 
 // "overdue" não é um status real do banco — é um filtro composto (prazo
@@ -209,9 +207,48 @@ export function DashboardScreen() {
   // e em qualquer outro lugar do app. Email só aparece como tooltip.
   const [currentUserName, setCurrentUserName] = useState<string | null>(null);
 
-  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefs>(
-    DEFAULT_NOTIFICATION_PREFS,
+  // Centro de notificações in-app. As notificações são criadas server-side
+  // (triggers no banco); aqui só lemos/assinamos/marcamos como lida.
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifAutoOpenedRef = useRef(false);
+
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications],
   );
+
+  // Marca UMA notificação como lida: otimista no estado local + persiste no
+  // banco (o realtime UPDATE sincroniza as outras sessões). Só o clique NA
+  // NOTIFICAÇÃO (popup ou banner do SO) marca — abrir a demanda por navegação
+  // normal (lista/kanban/busca) não mexe no "lida".
+  const markNotifRead = useCallback((id: string) => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n)),
+    );
+    void markNotificationRead(id);
+  }, []);
+
+  const handleSelectNotification = useCallback(
+    (demandId: string | null, notificationId: string) => {
+      if (demandId) setSelectedDemandId(demandId);
+      markNotifRead(notificationId);
+      setNotifOpen(false);
+    },
+    [markNotifRead],
+  );
+
+  const handleMarkAllNotificationsRead = useCallback(() => {
+    if (!currentUserId) return;
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    void markAllNotificationsRead(currentUserId);
+  }, [currentUserId]);
+
+  const handleClearReadNotifications = useCallback(() => {
+    if (!currentUserId) return;
+    setNotifications((prev) => prev.filter((n) => !n.read));
+    void clearReadNotifications(currentUserId);
+  }, [currentUserId]);
 
   // Detecta papel admin do usuário atual para liberar gestão de regras e
   // carrega o nome de exibição.
@@ -222,9 +259,6 @@ export function DashboardScreen() {
       const me = all.data.find((p) => p.id === currentUserId);
       setIsAdmin(me?.role === "admin");
       setCurrentUserName(me?.full_name ?? null);
-      if (me?.notifications) {
-        setNotificationPrefs({ ...DEFAULT_NOTIFICATION_PREFS, ...me.notifications });
-      }
     })();
   }, [currentUserId, membersAdminOpen, notificationSettingsOpen]);
 
@@ -283,14 +317,15 @@ export function DashboardScreen() {
     void ensureNotificationPermission();
   }, []);
 
-  // Clique em notificação nativa → abre o drawer da demanda correspondente.
-  // O macOS não entrega o click como evento JS no body da notificação; usamos
-  // foco recente da janela main como proxy (ver notifications.ts).
+  // Clique na notificação do SO → abre o drawer da demanda E marca ESSA
+  // notificação como lida. Só o clique na notificação marca; abrir a demanda
+  // por navegação normal não. Detecção via foco (ver notifications.ts).
   useEffect(() => {
-    return subscribeToNotificationClick((demandId) => {
+    return subscribeToNotificationClick((demandId, notificationId) => {
       setSelectedDemandId(demandId);
+      if (notificationId) markNotifRead(notificationId);
     });
-  }, []);
+  }, [markNotifRead]);
 
   // Limpa o badge ao desmontar (sair do Dashboard / signOut)
   useEffect(() => {
@@ -314,35 +349,6 @@ export function DashboardScreen() {
     void setTrayBadge(pendingForMeCount);
   }, [pendingForMeCount]);
 
-  // Referência sempre atualizada de demandas + user atual, usadas dentro
-  // dos callbacks de realtime (que rodam fora do ciclo de render).
-  const demandsRef = useRef<Demand[]>([]);
-  useEffect(() => {
-    demandsRef.current = demands;
-  }, [demands]);
-  const currentUserIdRef = useRef<string | null>(currentUserId);
-  useEffect(() => {
-    currentUserIdRef.current = currentUserId;
-  }, [currentUserId]);
-  // Refs também pra isAdmin, clients e profiles — usadas nos callbacks de
-  // realtime (notificationDecider) sem precisar reassinar as subscriptions
-  // a cada mudança.
-  const isAdminRef = useRef<boolean>(isAdmin);
-  useEffect(() => {
-    isAdminRef.current = isAdmin;
-  }, [isAdmin]);
-  const notificationPrefsRef = useRef<NotificationPrefs>(notificationPrefs);
-  useEffect(() => {
-    notificationPrefsRef.current = notificationPrefs;
-  }, [notificationPrefs]);
-  const clientsRef = useRef<ClientOption[]>(clients);
-  useEffect(() => {
-    clientsRef.current = clients;
-  }, [clients]);
-  const profilesRef = useRef<ProfileOption[]>(profiles);
-  useEffect(() => {
-    profilesRef.current = profiles;
-  }, [profiles]);
   // Ref do status do realtime — usado pelo efeito de recuperação (que roda em
   // listeners de foco/rede, fora do ciclo de render).
   const realtimeConnectedRef = useRef<boolean>(realtimeConnected);
@@ -350,10 +356,10 @@ export function DashboardScreen() {
     realtimeConnectedRef.current = realtimeConnected;
   }, [realtimeConnected]);
 
-  // Subscreve realtime de demandas + decide notificação por role via decider.
-  // Admin recebe TUDO (exceto suas próprias ações); membro só o que envolve
-  // ele (assignee/created_by). Toda a matriz de decisão fica em
-  // notificationDecider.ts (testada à parte).
+  // Subscreve realtime de demandas SÓ para manter a LISTA atualizada ao vivo.
+  // A decisão/criação de notificações agora é 100% server-side (triggers no
+  // banco); o banner nativo e o contador vêm da assinatura da tabela
+  // `notifications` (efeito abaixo).
   useEffect(() => {
     const unsubscribe = subscribeToDemands(
       (event, change) => {
@@ -370,28 +376,6 @@ export function DashboardScreen() {
           }
           return prev;
         });
-
-        const notif = decideDemandNotification({
-          event,
-          change,
-          me: currentUserIdRef.current,
-          role: isAdminRef.current ? "admin" : "member",
-          wasLocalChange,
-          prefs: notificationPrefsRef.current,
-          ctx: {
-            clientName: (id) =>
-              id
-                ? clientsRef.current.find((c) => c.id === id)?.name
-                : undefined,
-            profileName: (id) =>
-              id
-                ? profilesRef.current.find((p) => p.id === id)?.full_name
-                : undefined,
-          },
-        });
-        if (notif) {
-          void notifyAboutDemand(notif.title, notif.body, notif.demandId);
-        }
       },
       (connected) => {
         // Status REAL do canal (SUBSCRIBED vs caiu). Quando o realtime cai e a
@@ -429,54 +413,42 @@ export function DashboardScreen() {
     };
   }, []);
 
-  // Subscreve INSERTs de comentários em qualquer demanda — decisão de
-  // notificar fica no decider (admin vê tudo; membro só sobre demandas dele).
-  useEffect(() => {
-    const unsubscribe = subscribeToAllCommentInserts((comment) => {
-      const demand =
-        demandsRef.current.find((d) => d.id === comment.demand_id) ?? null;
-      // Menção tem prioridade — quando o user é mencionado, sempre notifica
-      // (mesmo que ele não seja envolvido na demanda). Se o decider de menção
-      // disparou, NÃO cai no decider genérico de comentário pra evitar 2
-      // notificações pro mesmo evento.
-      const mentionNotif = decideMentionNotification({
-        comment,
-        demand,
-        me: currentUserIdRef.current,
-        prefs: notificationPrefsRef.current,
-      });
-      if (mentionNotif) {
-        void notifyAboutDemand(mentionNotif.title, mentionNotif.body, mentionNotif.demandId);
-        return;
-      }
-      const notif = decideCommentNotification({
-        comment,
-        demand,
-        me: currentUserIdRef.current,
-        role: isAdminRef.current ? "admin" : "member",
-        prefs: notificationPrefsRef.current,
-      });
-      if (notif) {
-        void notifyAboutDemand(notif.title, notif.body, notif.demandId);
-      }
-    });
-    return unsubscribe;
-  }, []);
-
-  // Notificações de prazo — Postgres cria os registros 1x/dia via pg_cron,
-  // o cliente só escuta e dispara notificação local. Servidor já filtra por
-  // profiles.notifications.due_soon, então qualquer INSERT que chegar aqui
-  // é desejado.
+  // Centro de notificações: carrega as do usuário, assina em tempo real e, em
+  // cada nova (INSERT), dispara o banner nativo do SO. Abre o popup no 1º load
+  // se houver não lidas. As notificações já vêm prontas do servidor (uma linha
+  // por destinatário; admin recebe de tudo), então aqui não há decisão nenhuma.
   useEffect(() => {
     if (!currentUserId) return;
-    const unsubscribe = subscribeToDueNotifications(currentUserId, (row) => {
-      const demand = demandsRef.current.find((d) => d.id === row.demand_id);
-      if (!demand) return;
-      const title = demand.title || "Demanda sem título";
-      const body = `Prazo ${bucketToLabel(row.bucket)}.`;
-      void notifyAboutDemand(title, body, row.demand_id);
+    let activeLoad = true;
+    (async () => {
+      const { data } = await listMyNotifications();
+      if (!activeLoad) return;
+      setNotifications(data);
+      if (!notifAutoOpenedRef.current && data.some((n) => !n.read)) {
+        notifAutoOpenedRef.current = true;
+        setNotifOpen(true);
+      }
+    })();
+    const unsub = subscribeToMyNotifications(currentUserId, {
+      onInsert: (n) => {
+        setNotifications((prev) =>
+          prev.some((x) => x.id === n.id) ? prev : [n, ...prev],
+        );
+        // Banner nativo do SO. Passa o notificationId pro proxy conseguir
+        // marcar ESTA notificação como lida quando o banner for clicado.
+        if (n.demand_id) {
+          void notifyAboutDemand(n.title, n.body, n.demand_id, n.id);
+        }
+      },
+      onUpdate: (n) =>
+        setNotifications((prev) => prev.map((x) => (x.id === n.id ? n : x))),
+      onDelete: (id) =>
+        setNotifications((prev) => prev.filter((x) => x.id !== id)),
     });
-    return unsubscribe;
+    return () => {
+      activeLoad = false;
+      unsub();
+    };
   }, [currentUserId]);
 
   const selectedDemand = useMemo(
@@ -662,6 +634,16 @@ export function DashboardScreen() {
             />
             {realtimeConnected ? "ao vivo" : "offline"}
           </span>
+          <NotificationsBell
+            notifications={notifications}
+            unreadCount={unreadCount}
+            open={notifOpen}
+            onToggle={() => setNotifOpen((v) => !v)}
+            onClose={() => setNotifOpen(false)}
+            onSelect={handleSelectNotification}
+            onMarkAllRead={handleMarkAllNotificationsRead}
+            onClearRead={handleClearReadNotifications}
+          />
         </div>
         <div className="flex justify-center">
           <ViewToggle mode={viewMode} onChange={setViewMode} />
@@ -1428,8 +1410,8 @@ function DemandCard({
 
   // Status fica em estado otimista local pra UX imediata quando o user
   // clica num dos botões — sem isso, ele veria o botão "Em andamento"
-  // demorar a destacar até o realtime confirmar. wasLocalChange continua
-  // suprimindo eco de notificação.
+  // demorar a destacar até o realtime confirmar. (A supressão de auto-notificação
+  // agora é server-side: os triggers não notificam quem fez a ação.)
   const [optimisticStatus, setOptimisticStatus] = useState<DemandStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const currentStatus = optimisticStatus ?? demand.status;
