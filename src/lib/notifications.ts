@@ -1,25 +1,10 @@
 // =============================================================================
-// Notificações nativas + correlação com a demanda alvo
+// Notificações nativas do SO
 // =============================================================================
-// O tauri-plugin-notification dispara banner do sistema, mas o click no body
-// da notificação não vira evento JS no macOS — só foca a janela do app. Isso
-// nos obriga a correlacionar "qual demanda gerou a última notificação" com
-// o `tauri://focus` da janela main.
-//
-// Estratégia:
-//   1. Toda notificação ligada a uma demanda passa por `notifyAboutDemand`,
-//      que registra `{ demandId, at }` em estado de módulo.
-//   2. `subscribeToNotificationClick` ouve o focus da janela main; se ele
-//      acontece pouco tempo (< 8s) depois da notificação, considera que foi
-//      clique e entrega o `demandId` pendente ao callback.
-//
-// Limitações conhecidas:
-//   - Se o user dá Cmd+Tab pra app dentro da janela de 8s, a app vai abrir
-//     o drawer da última notificação — comportamento aceitável (a chance é
-//     baixa e o resultado é "mostrar algo relevante", não destrutivo).
-//   - Apenas a notificação mais recente é correlacionada. Se chegam duas em
-//     <1s e o user clica na primeira, vai abrir a segunda. Para o uso real
-//     (~10 pessoas, fluxo de demandas) é raro.
+// `notify()` dispara um banner do sistema via tauri-plugin-notification (usado
+// como fallback e no botão de teste). O caminho com CLIQUE real (abrir a
+// demanda ao clicar no banner) fica em `notifyWithClick` mais abaixo — via Web
+// Notification API do WebView, com fallback pro plugin. Ver o comentário lá.
 // =============================================================================
 
 import {
@@ -27,7 +12,6 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { supabase } from "./supabase/client";
 
 export type DueBucket = "5d" | "3d" | "24h";
@@ -103,97 +87,85 @@ export function wasLocalChange(demandId: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Correlação click → demanda
+// Notificação com CLIQUE real → demanda (Web Notification API + fallback)
 // ---------------------------------------------------------------------------
-// No desktop (macOS/Windows) o SO NÃO entrega o clique no corpo da notificação
-// como evento — só ativa/foca o app. Então usamos "o app ganhou foco logo após
-// uma notificação" como proxy de clique. Duas lições do uso real (2026-07-15):
-//   1. 8s era curto DEMAIS. Entre a notificação chegar (latência do realtime) e
-//      o usuário efetivamente clicar (às vezes noutra máquina, lendo o banner
-//      antes), passavam >8s → o pending expirava → "clico e nada abre". Subimos
-//      pra 60s: quem clica numa notificação costuma fazê-lo dentro de 1 min.
-//   2. Só armamos o pending quando o app NÃO está focado no momento da
-//      notificação. Se ele já está focado, clicar no banner não gera transição
-//      de foco (o flush nunca roda de qualquer jeito), e um pending armado
-//      abriria a demanda errada no próximo foco não relacionado (falso
-//      positivo). App em background/escondido → clicar traz o foco → abre.
-const CLICK_WINDOW_MS = 60_000;
+// O desktop do Tauri NÃO entrega o clique no banner do plugin nativo (só o
+// mobile — confirmado na fonte do plugin e na issue tauri #4770/#2150). A saída
+// que dá clique real SEM assinar o app é a Web Notification API do próprio
+// WebView: `new Notification(...)` tem `onclick` de verdade (é o que o app
+// ClawTerm usou pro mesmo problema). Porém no macOS (WKWebView) ela às vezes
+// NÃO exibe o banner. Estratégia adaptativa:
+//   1. Dispara via Web Notification API.
+//   2. Se CONFIRMAR que exibiu (evento `onshow`), usa o `onclick` dela — clicar
+//      abre a demanda. Um banner só.
+//   3. Se NÃO exibir (sem `onshow` até o timeout, ou `onerror`), cai no plugin
+//      Tauri (banner garantido, sem clique). O fallback dispara UMA vez só.
+// Resultado: a notificação SEMPRE aparece, nunca duplica, e o clique→demanda
+// vale sempre que a Web API exibiu (Windows sempre; macOS quando suportar).
+//
+// Antes disto usávamos "foco da janela após a notificação" como proxy de
+// clique — que abria a demanda em QUALQUER foco (falso-positivo). Removido.
 
-type Pending = { demandId: string; notificationId?: string; at: number };
-
-let pending: Pending | null = null;
-
-export async function notifyAboutDemand(
-  title: string,
-  body: string,
-  demandId: string,
-  notificationId?: string,
-): Promise<void> {
-  const appFocused = typeof document !== "undefined" && document.hasFocus();
-  if (!appFocused) {
-    // notificationId permite ao proxy marcar AQUELA notificação como lida
-    // quando o clique no banner do SO traz o foco e abre a demanda.
-    pending = { demandId, notificationId, at: Date.now() };
+/** Pede a permissão da Web Notification API (separada da permissão do plugin). */
+export async function ensureWebNotificationPermission(): Promise<void> {
+  try {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      if (window.Notification.permission === "default") {
+        await window.Notification.requestPermission();
+      }
+    }
+  } catch {
+    /* se falhar, o fallback do plugin cobre a exibição */
   }
-  await notify(title, body);
 }
 
 /**
- * Ouve focos na janela main e, quando o foco chega logo após uma notificação,
- * entrega o demandId ao callback. Devolve função pra cancelar.
- *
- * Escutamos por DUAS vias em paralelo porque cada uma falha em casos
- * diferentes no Tauri 2 + macOS:
- *   - DOM focus event (window.addEventListener "focus") — dispara quando o
- *     webview ganha foco; consistente entre plataformas.
- *   - Tauri Window.onFocusChanged — dispara em transição focus/blur; mais
- *     baixo nível, garante captura em casos onde DOM event não dispara
- *     (alguns relaunches/reflows).
- * O `pending` é consumido pela primeira que entregar, então não há risco
- * de chamar `onClick` duas vezes para o mesmo evento.
+ * Mostra uma notificação e, quando o usuário CLICA nela, chama `onClick`.
+ * Tenta a Web Notification API (clique real); se ela não exibir, cai no plugin
+ * Tauri (banner garantido, sem clique).
  */
-export function subscribeToNotificationClick(
-  onClick: (demandId: string, notificationId?: string) => void,
-): () => void {
-  let cancelled = false;
-  let unlistenTauri: (() => void) | null = null;
+export async function notifyWithClick(
+  title: string,
+  body: string,
+  onClick: () => void,
+): Promise<void> {
+  const canWeb =
+    typeof window !== "undefined" &&
+    "Notification" in window &&
+    window.Notification.permission === "granted";
 
-  function flushIfPending(): void {
-    const p = pending;
-    if (!p) return;
-    if (Date.now() - p.at > CLICK_WINDOW_MS) {
-      pending = null;
+  if (canWeb) {
+    try {
+      let shown = false;
+      let fellBack = false;
+      const fallback = () => {
+        if (shown || fellBack) return;
+        fellBack = true;
+        void notify(title, body);
+      };
+      const n = new window.Notification(title, { body });
+      n.onshow = () => {
+        shown = true;
+      };
+      n.onclick = () => {
+        onClick();
+        try {
+          n.close();
+        } catch {
+          /* noop */
+        }
+      };
+      n.onerror = () => fallback();
+      // Sem `onshow` até aqui => a Web API não exibiu (ex.: macOS) => plugin.
+      window.setTimeout(fallback, 700);
       return;
+    } catch {
+      /* falhou ao criar — cai no plugin abaixo */
     }
-    pending = null;
-    onClick(p.demandId, p.notificationId);
   }
 
-  // Via 1 — DOM
-  window.addEventListener("focus", flushIfPending);
-
-  // Via 2 — Tauri (best-effort; alguns ambientes podem não suportar)
-  (async () => {
-    try {
-      const win = getCurrentWindow();
-      const unlisten = await win.onFocusChanged(({ payload: focused }) => {
-        if (focused) flushIfPending();
-      });
-      if (cancelled) {
-        unlisten();
-      } else {
-        unlistenTauri = unlisten;
-      }
-    } catch (err) {
-      console.warn("[notifications] tauri focus listener unavailable:", err);
-    }
-  })();
-
-  return () => {
-    cancelled = true;
-    window.removeEventListener("focus", flushIfPending);
-    if (unlistenTauri) unlistenTauri();
-  };
+  // Fallback: plugin Tauri (banner garantido, sem clique).
+  await notify(title, body);
 }
 
 // ---------------------------------------------------------------------------

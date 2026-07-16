@@ -303,6 +303,55 @@ lida — fail-safe, aparece no popup). O `notificationDecider.ts` e
 `subscribeToAllCommentInserts`/`subscribeToDueNotifications` ficaram como código
 morto (não removidos pra não arriscar; podem ser limpos depois).
 
+## Clique na notificação abre a demanda + prioridade + fim do falso-positivo — 2026-07-16
+
+Feedback do teste da v0.2.6: (a) faltava notificação de mudança de PRIORIDADE;
+(b) clicar no banner do SO não abria a demanda; (c) pior — SEM clicar, ao abrir
+o app ele já ia pra demanda da última notificação (devia abrir o POPUP).
+
+Investigação (a pedido do usuário, sem chute): a fonte do `tauri-plugin-
+notification` 2.3.3 confirma que no DESKTOP o `show()` é dispara-e-esquece — o
+clique NÃO vira evento (só o mobile tem `onAction`); issue oficial tauri
+#4770/#2150 aberta desde 2022. O "abre a demanda" vinha 100% do proxy de FOCO
+(abria em QUALQUER foco = o falso-positivo). Referência decisiva: a issue
+**clawterm#174** (mesmo problema) e a correção que eles mergeram (commit e15f210)
+usam a **Web Notification API** do WebView (`new Notification` tem `onclick`
+real) — sem plugin nativo e sem assinar. O plugin nativo (Choochmeque /
+`user-notify` via UNUserNotificationCenter) daria clique real mas exige **assinar
+o macOS** ($99/ano) — evitado.
+
+- ✅ ✨ **Migration `20260716000001_notif_priority.sql` — 2026-07-16.** ⚠️ PRECISA
+  SER APLICADA no Supabase. Adiciona `'priority'` ao CHECK do `type`; helper
+  `_priority_label`; `_notif_on_demand_update` passa a disparar `priority` quando
+  `new.priority is distinct from old.priority` (mesmos watchers dos outros).
+- ✅ 🐛 **Fim do falso-positivo (proxy de foco removido) — 2026-07-16.** Removidos
+  `notifyAboutDemand`/`subscribeToNotificationClick`/`pending`/`CLICK_WINDOW_MS`
+  do `notifications.ts` e o efeito no Dashboard. Agora, SEM clique, ao trazer o
+  app à frente (foco/visível) com não lidas, abre o **POPUP** — nunca a demanda
+  da última notificação (suprimido por ~1,5s após um clique real).
+- ✅ ✨ **`notifyWithClick` (Web Notification API + fallback) — 2026-07-16.**
+  `notifications.ts`: dispara via `new Notification(...)`; se `onshow` confirmar
+  que exibiu, usa o `onclick` REAL (clicar → abre a demanda) — 1 banner só; se
+  NÃO exibir (`onshow` não dispara até 700ms, ou `onerror`), cai no plugin Tauri
+  (banner garantido, sem clique) — fallback UMA vez, sem duplicar. O `onclick`
+  chama `handleNotificationClick`: `invoke("show_main_window_cmd")` (Rust, traz a
+  janela mesmo escondida na bandeja) + abre a demanda + marca lida.
+  `ensureWebNotificationPermission()` pede a permissão da Web API no startup
+  (separada da do plugin).
+- ✅ ✨ **Rust `show_main_window_cmd` — 2026-07-16.** Comando invocável que chama
+  `show_main_window` (pro `onclick` da Web Notification trazer a janela à frente).
+- ✅ ✨ **`priority` no centro — 2026-07-16.** `AppNotificationType` e
+  `notificationIcon` (→ `fa-flag`) em `notificationsCenter.ts`.
+- ✅ ✨ **Bump 0.2.6 → 0.2.7 — 2026-07-16.**
+
+**Expectativa a validar na release:** Windows (WebView2) → clique abre a demanda
+direto (confiável). macOS (WKWebView) → provavelmente também (Macs M1 + build de
+release, onde a Web Notification costuma funcionar); se a Web API não exibir,
+entra o fallback do plugin — o banner aparece, o clique não abre, mas o popup no
+foco cobre. Sem regressão: a notificação SEMPRE aparece e não há mais
+falso-positivo. Se o macOS não pegar o clique direto, o caminho garantido seria
+assinar o app (Choochmeque/user-notify) — decisão adiada.
+
 ---
 
 ## Visão geral

@@ -493,6 +493,15 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+// Invocável do frontend: traz a janela main pra frente. Usado no `onclick` da
+// Web Notification (quando o usuário clica no banner) — precisa mostrar a janela
+// mesmo que ela esteja escondida na bandeja, e o clique roda no contexto JS do
+// webview (que segue vivo mesmo com a janela oculta).
+#[tauri::command]
+fn show_main_window_cmd(app: tauri::AppHandle) {
+    show_main_window(&app);
+}
+
 // Commands invocáveis do frontend pra forçar a criação on-demand das
 // janelas auxiliares antes de emitir eventos pra elas (sem isso, o
 // evento se perde porque a janela ainda não existe).
@@ -587,6 +596,7 @@ pub fn run() {
         .manage(PreviewPayloadStore(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             hide_capture_window,
+            show_main_window_cmd,
             set_tray_badge,
             read_file_bytes,
             write_file_bytes,

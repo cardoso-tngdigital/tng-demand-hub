@@ -13,6 +13,7 @@ import { supabase } from "./supabase/client";
 export type AppNotificationType =
   | "assigned"
   | "status"
+  | "priority"
   | "comment"
   | "mention"
   | "due"
@@ -37,6 +38,8 @@ export function notificationIcon(type: AppNotificationType): string {
       return "fa-user-check";
     case "status":
       return "fa-arrows-rotate";
+    case "priority":
+      return "fa-flag";
     case "comment":
       return "fa-comment";
     case "mention":

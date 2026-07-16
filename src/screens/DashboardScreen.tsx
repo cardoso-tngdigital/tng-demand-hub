@@ -12,8 +12,8 @@ import {
 import { listAllClients } from "../lib/clients";
 import {
   ensureNotificationPermission,
-  notifyAboutDemand,
-  subscribeToNotificationClick,
+  ensureWebNotificationPermission,
+  notifyWithClick,
 } from "../lib/notifications";
 import {
   clearReadNotifications,
@@ -250,6 +250,50 @@ export function DashboardScreen() {
     void clearReadNotifications(currentUserId);
   }, [currentUserId]);
 
+  // Clique REAL na notificação do SO (via Web Notification onclick): traz a
+  // janela à frente (mesmo escondida na bandeja), abre a demanda e marca lida.
+  const lastNotifClickRef = useRef(0);
+  const handleNotificationClick = useCallback(
+    (demandId: string | null, notificationId: string) => {
+      lastNotifClickRef.current = Date.now();
+      void invoke("show_main_window_cmd").catch(() => {});
+      if (demandId) setSelectedDemandId(demandId);
+      markNotifRead(notificationId);
+    },
+    [markNotifRead],
+  );
+
+  // Refs pro efeito de auto-popup (roda em listeners de foco, fora do render).
+  const unreadCountRef = useRef(unreadCount);
+  useEffect(() => {
+    unreadCountRef.current = unreadCount;
+  }, [unreadCount]);
+  const notifOpenRef = useRef(notifOpen);
+  useEffect(() => {
+    notifOpenRef.current = notifOpen;
+  }, [notifOpen]);
+
+  // Sem clique numa notificação, ao trazer o app pra frente (foco/visível) com
+  // não lidas, abre o POPUP (não a demanda). Suprimido por ~1.5s após um clique
+  // real numa notificação (que abre a demanda, não o popup).
+  useEffect(() => {
+    function maybeOpenPopup() {
+      if (Date.now() - lastNotifClickRef.current < 1500) return;
+      if (unreadCountRef.current > 0 && !notifOpenRef.current) {
+        setNotifOpen(true);
+      }
+    }
+    function onVisible() {
+      if (document.visibilityState === "visible") maybeOpenPopup();
+    }
+    window.addEventListener("focus", maybeOpenPopup);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", maybeOpenPopup);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   // Detecta papel admin do usuário atual para liberar gestão de regras e
   // carrega o nome de exibição.
   useEffect(() => {
@@ -312,20 +356,12 @@ export function DashboardScreen() {
     })();
   }, []);
 
-  // Pede permissão de notificação uma vez por sessão
+  // Pede as permissões de notificação uma vez por sessão: a do plugin Tauri
+  // (fallback) e a da Web Notification API (caminho com clique real).
   useEffect(() => {
     void ensureNotificationPermission();
+    void ensureWebNotificationPermission();
   }, []);
-
-  // Clique na notificação do SO → abre o drawer da demanda E marca ESSA
-  // notificação como lida. Só o clique na notificação marca; abrir a demanda
-  // por navegação normal não. Detecção via foco (ver notifications.ts).
-  useEffect(() => {
-    return subscribeToNotificationClick((demandId, notificationId) => {
-      setSelectedDemandId(demandId);
-      if (notificationId) markNotifRead(notificationId);
-    });
-  }, [markNotifRead]);
 
   // Limpa o badge ao desmontar (sair do Dashboard / signOut)
   useEffect(() => {
@@ -434,11 +470,11 @@ export function DashboardScreen() {
         setNotifications((prev) =>
           prev.some((x) => x.id === n.id) ? prev : [n, ...prev],
         );
-        // Banner nativo do SO. Passa o notificationId pro proxy conseguir
-        // marcar ESTA notificação como lida quando o banner for clicado.
-        if (n.demand_id) {
-          void notifyAboutDemand(n.title, n.body, n.demand_id, n.id);
-        }
+        // Banner do SO com clique real (Web Notification API + fallback pro
+        // plugin). Clicar → traz o app à frente + abre a demanda + marca lida.
+        void notifyWithClick(n.title, n.body, () =>
+          handleNotificationClick(n.demand_id, n.id),
+        );
       },
       onUpdate: (n) =>
         setNotifications((prev) => prev.map((x) => (x.id === n.id ? n : x))),
