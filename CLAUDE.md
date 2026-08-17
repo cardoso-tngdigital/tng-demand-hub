@@ -149,6 +149,32 @@ asm.js com `new Function`, precisa do `'unsafe-eval'` completo.
 
 ---
 
+## HEIC do iPhone: heic2any (libheif velho) → heic-to/csp (moderno) + v0.2.11 — 2026-08-17
+
+Teste da v0.2.10 no Windows (console do membro): o `'unsafe-eval'` resolveu o CSP
+(heic2any passou a EXECUTAR), mas o libheif embutido no heic2any 0.0.4 é de ~2020 e
+NÃO decodifica o HEIC de iPhone atual → `ERR_LIBHEIF format not supported` (code 2)
+→ fallback pro HEIC. Diagnóstico veio do console real (não chute):
+`[heic] conversão falhou … ERR_LIBHEIF format not supported`.
+
+- ✅ 🐛 **Troca heic2any → `heic-to/csp` — 2026-08-17.** `heic-to` 1.5.2 traz um
+  libheif MODERNO (libde265 1.0.16) que decodifica HEIC de iPhone recente. O subpath
+  **`/csp`** é o build oficial pra CSP restrito (o README aponta ele pra exatamente
+  o erro de `'unsafe-eval'`): 0 `eval`/`new Function`, binário embutido (sem `.wasm`
+  externo), roda num Worker criado de blob URL inline (`new Worker(URL.createObjectURL(...))`)
+  — coberto por `worker-src 'self' blob:`. `moduleResolution: "bundler"` resolve o
+  subpath. API: `heicTo({ blob, type: "image/jpeg", quality: 0.9 })`. `maybeConvertHeic`
+  (ponto central: captura + drawer + colar + drag-drop) passou a usar isso; fallback
+  pro original mantido. heic2any removido das deps.
+- ℹ️ **CSP:** mantido o `'unsafe-eval'` da v0.2.10 como rede de segurança (cobre
+  qualquer caminho do libheif — asm.js/wasm). Pode ser estreitado depois se
+  confirmarmos que o `/csp` dispensa.
+- ✅ ✨ **Bump 0.2.10 → 0.2.11 — 2026-08-17.** Chunk lazy `heic-to` ~2.9MB (só carrega
+  ao converter HEIC). Build ok. Validar no Windows: anexar `.heic` de iPhone na
+  captura E no drawer → vira `.jpg` e abre a prévia nos dois SOs.
+
+---
+
 ## App principal — devtools + anexos — 2026-07-10
 
 Primeira leva de mudanças no **app principal** (fora do módulo Blog) desde as

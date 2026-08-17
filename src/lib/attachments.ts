@@ -267,18 +267,19 @@ async function maybeCompressImage(file: File): Promise<File> {
   }
 }
 
-// Converte HEIC/HEIF (fotos de iPhone) em JPEG no cliente via heic2any (libheif
-// em asm.js — roda sob o CSP atual, SEM WASM). Import dinâmico: os ~1.3MB da lib
-// só carregam quando alguém realmente anexa um HEIC. Sem isto, a prévia quebrava
-// no Windows (WebView2/Chromium não renderiza HEIC). Se a conversão falhar,
-// devolvemos o original — que ainda é aceito e abre no macOS.
+// Converte HEIC/HEIF (fotos de iPhone) em JPEG no cliente via `heic-to/csp` — o
+// build da lib feito pra CSP restrito (0 eval/new Function; libheif MODERNO, que
+// decodifica o HEIC de iPhone atual). Antes usávamos heic2any, cujo libheif era
+// velho e dava "ERR_LIBHEIF format not supported" no HEIC de iPhone recente. Roda
+// num Worker de blob (coberto por `worker-src 'self' blob:`), com o binário
+// embutido (sem .wasm externo). Import dinâmico: só carrega quando alguém anexa um
+// HEIC. Se a conversão falhar, devolvemos o original (aceito e abre no macOS).
 async function maybeConvertHeic(file: File): Promise<File> {
   const mime = resolveMime(file);
   if (mime !== "image/heic" && mime !== "image/heif") return file;
   try {
-    const { default: heic2any } = await import("heic2any");
-    const out = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
-    const blob = Array.isArray(out) ? out[0] : out;
+    const { heicTo } = await import("heic-to/csp");
+    const blob = await heicTo({ blob: file, type: "image/jpeg", quality: 0.9 });
     const nome = file.name.replace(/\.(heic|heif)$/i, "") + ".jpg";
     console.log(
       "[heic] convertido:",
