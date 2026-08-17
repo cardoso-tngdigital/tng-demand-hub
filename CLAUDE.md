@@ -96,6 +96,31 @@ para o sistema web (navegador) que o sócio desenvolve — o Blog sai de escopo.
 
 ---
 
+## Conversão HEIC→JPEG no upload (abre no Windows também) + v0.2.9 — 2026-08-17
+
+Feedback: a equipe usa Windows, e HEIC só tinha prévia no macOS (a v0.2.8 só
+ACEITAVA o HEIC). Agora a foto de iPhone é **convertida pra JPEG no cliente, no
+momento do upload** — o anexo guardado é JPEG, que abre em qualquer WebView
+(Windows + Mac) e na IA.
+
+- ✅ ✨ **`maybeConvertHeic` em `src/lib/attachments.ts` — 2026-08-17.** No início do
+  `buildPendingAttachment` (o caminho central de TODOS os anexos), se o MIME é
+  `image/heic`/`image/heif`, converte pra JPEG via **`heic2any`** (import dinâmico:
+  os ~1.3MB da lib só carregam quando alguém anexa um HEIC). O arquivo vira
+  `foto.jpg` / `image/jpeg` e segue o fluxo normal (compressão 1920px + upload). A
+  conversão acontece ANTES da validação/compressão, então cobre captura, drawer,
+  colar e drag-drop de uma vez. Falha na conversão → **fallback pro HEIC original**
+  (que continua aceito desde a v0.2.8; nada se perde).
+- ✅ 🔒 **Sem afrouxar o CSP — 2026-08-17.** `heic2any` embute o libheif como
+  **asm.js (JS puro)**, não WASM (confirmado: 0 ocorrências de `WebAssembly` no
+  dist). Roda sob o `script-src 'self' 'unsafe-inline'` atual sem precisar de
+  `wasm-unsafe-eval` — importante porque o WKWebView do macOS é chato com WASM+CSP.
+- ✅ ✨ **Bump 0.2.8 → 0.2.9 + dep `heic2any ^0.0.4` — 2026-08-17.** Validar no app
+  instalado (Windows + Mac): anexar foto `.heic` deve virar `.jpg` e abrir a prévia
+  nos dois SOs.
+
+---
+
 ## App principal — devtools + anexos — 2026-07-10
 
 Primeira leva de mudanças no **app principal** (fora do módulo Blog) desde as

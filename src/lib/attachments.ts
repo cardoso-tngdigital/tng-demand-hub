@@ -267,20 +267,49 @@ async function maybeCompressImage(file: File): Promise<File> {
   }
 }
 
+// Converte HEIC/HEIF (fotos de iPhone) em JPEG no cliente via heic2any (libheif
+// em asm.js — roda sob o CSP atual, SEM WASM). Import dinâmico: os ~1.3MB da lib
+// só carregam quando alguém realmente anexa um HEIC. Sem isto, a prévia quebrava
+// no Windows (WebView2/Chromium não renderiza HEIC). Se a conversão falhar,
+// devolvemos o original — que ainda é aceito e abre no macOS.
+async function maybeConvertHeic(file: File): Promise<File> {
+  const mime = resolveMime(file);
+  if (mime !== "image/heic" && mime !== "image/heif") return file;
+  try {
+    const { default: heic2any } = await import("heic2any");
+    const out = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+    const blob = Array.isArray(out) ? out[0] : out;
+    const nome = file.name.replace(/\.(heic|heif)$/i, "") + ".jpg";
+    console.log(
+      "[heic] convertido:",
+      file.name,
+      `${(file.size / 1024 / 1024).toFixed(2)}MB → ${nome} ${(blob.size / 1024 / 1024).toFixed(2)}MB`,
+    );
+    return new File([blob], nome, { type: "image/jpeg" });
+  } catch (err) {
+    console.warn("[heic] conversão falhou, mantendo HEIC original:", err);
+    return file;
+  }
+}
+
 export async function buildPendingAttachment(
   file: File,
 ): Promise<PendingAttachment | { error: string }> {
   console.log("[buildPendingAttachment]", file.name, file.type, file.size, "bytes");
 
+  // Fotos de iPhone (.heic/.heif) viram JPEG ANTES de tudo, pra abrirem em
+  // qualquer WebView (Windows não renderiza HEIC). Falha → segue com o original.
+  const source = await maybeConvertHeic(file);
+
   // Validação preliminar (MIME). Compressão pode reduzir tamanho, então
   // checamos o size depois. Aqui só rejeitamos tipos não suportados / 0B.
-  const preCheck = validateFile(file);
+  const preCheck = validateFile(source);
   if (!preCheck.ok && preCheck.error.startsWith("Tipo")) {
     console.warn("[buildPendingAttachment] validação falhou:", preCheck.error);
     return { error: preCheck.error };
   }
 
-  const compressed = await maybeCompressImage(file);
+  const compressed = await maybeCompressImage(source);
 
   const v = validateFile(compressed);
   if (!v.ok) {
