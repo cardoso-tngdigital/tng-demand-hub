@@ -27,17 +27,6 @@
     "updater:default",
     "process:default",
     "process:allow-restart",
-    "dialog:default",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "tng-blog-sidecar",
-          "sidecar": true,
-          "args": true
-        }
-      ]
-    },
-    "shell:allow-kill"
+    "dialog:default"
   ]
 }

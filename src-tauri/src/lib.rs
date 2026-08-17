@@ -35,11 +35,6 @@ use tauri::{
 // está pronta — sem corrida. 2026-07-10.
 struct PreviewPayloadStore(Mutex<Option<String>>);
 
-mod blog_sidecar;
-use blog_sidecar::{
-    blog_sidecar_start_lazy, blog_sidecar_status, kill_sidecar, BlogSidecarState,
-};
-
 // ---------------------------------------------------------------------------
 // Estado global do detector de dupla pressão
 // ---------------------------------------------------------------------------
@@ -204,15 +199,6 @@ fn open_devtools(window: tauri::WebviewWindow) {
     window.open_devtools();
     #[cfg(not(any(debug_assertions, feature = "devtools")))]
     let _ = window;
-}
-
-// Grava bytes num arquivo escolhido pelo usuário (via dialog save do JS).
-// Necessário porque o WKWebView do macOS ignora silenciosamente cliques em
-// `<a download href="blob:...">` — não há handler de download no webview.
-// Usado pelo painel Blog pra salvar o .docx do artigo (2026-07-09).
-#[tauri::command]
-fn write_file_bytes(path: String, bytes: Vec<u8>) -> Result<(), String> {
-    std::fs::write(&path, bytes).map_err(|err| format!("{} ({})", err, path))
 }
 
 // Modo COMBO. Frontend chama no boot e sempre que o user muda. Ao ativar
@@ -591,15 +577,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
-        .manage(BlogSidecarState::new())
         .manage(PreviewPayloadStore(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             hide_capture_window,
             show_main_window_cmd,
             set_tray_badge,
             read_file_bytes,
-            write_file_bytes,
             open_devtools,
             open_preview_window,
             get_preview_payload,
@@ -607,8 +590,6 @@ pub fn run() {
             set_capture_double_tap,
             ensure_capture_window_cmd,
             ensure_preview_window_cmd,
-            blog_sidecar_start_lazy,
-            blog_sidecar_status,
         ]);
 
     // Single-instance: garante que clicar no atalho da taskbar/Dock
@@ -727,24 +708,14 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| match event {
-            // No shutdown, mata o sidecar do Blog antes de encerrar. Sem isso,
-            // sobra um processo `tng-blog-sidecar` órfão no Activity Monitor
-            // / Task Manager depois do usuário fechar o app.
-            tauri::RunEvent::ExitRequested { .. } => {
-                if let Some(state) = app_handle.try_state::<BlogSidecarState>() {
-                    kill_sidecar(&state);
-                }
-            }
+        .run(|_app_handle, event| match event {
             // macOS: reativar o app (clicar no Dock e, na maioria dos casos,
             // clicar numa notificação) dispara Reopen. Mostramos a janela main
             // de novo — se ela estava escondida na bandeja/menubar (fechada no
-            // X), reaparece; ao ganhar foco, o proxy de clique (notifications.ts)
-            // abre a demanda pendente. Sem isto, clicar na notificação com a
-            // janela escondida ativava o app mas nada aparecia.
+            // X), reaparece e, com não lidas, o Dashboard abre o popup ao focar.
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
-                show_main_window(app_handle);
+                show_main_window(_app_handle);
             }
             _ => {}
         });

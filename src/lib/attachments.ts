@@ -26,6 +26,9 @@ const ALLOWED_MIME_TYPES = new Set<string>([
   "image/png",
   "image/jpeg",
   "image/webp",
+  // HEIC/HEIF — formato padrão das fotos do iPhone/iOS.
+  "image/heic",
+  "image/heif",
   // PDF
   "application/pdf",
   // Áudios (inclui formato do WhatsApp)
@@ -67,6 +70,8 @@ const EXTENSION_FALLBACK: Record<string, string> = {
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   webp: "image/webp",
+  heic: "image/heic",
+  heif: "image/heif",
   txt: "text/plain",
   csv: "text/csv",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -233,6 +238,11 @@ const IMAGE_COMPRESS_THRESHOLD_BYTES = 1 * 1024 * 1024;
 
 async function maybeCompressImage(file: File): Promise<File> {
   if (!file.type.startsWith("image/")) return file;
+  // HEIC/HEIF (fotos de iPhone) não são decodificáveis via <canvas> na maioria
+  // dos WebViews (Chromium/WebView2), então a compressão falharia — mantemos o
+  // arquivo original. O Gemini aceita image/heic direto; o macOS (WKWebView)
+  // ainda renderiza a prévia.
+  if (file.type === "image/heic" || file.type === "image/heif") return file;
   if (file.size < IMAGE_COMPRESS_THRESHOLD_BYTES) return file;
   try {
     const compressed = await imageCompression(file, {

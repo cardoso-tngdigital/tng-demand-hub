@@ -18,6 +18,84 @@ Use `Cmd+F` (`Ctrl+F`) com 🐛 ou ✨ pra navegar.
 
 ---
 
+## Blog REMOVIDO do projeto — 2026-08-05
+
+Decisão do usuário: o Blog não será mais usado. Todo o código, assets, deps e
+migrations do Blog foram removidos do `tng-demand-hub` (o app volta a ser
+**só** o gerenciador de demandas). **Motivo maior:** o app está sendo migrado
+para o sistema web (navegador) que o sócio desenvolve — o Blog sai de escopo.
+
+> ⚠️ Toda a seção histórica **"⚡ Migração do Blog (Sprints 21–31)"** mais
+> abaixo neste arquivo virou **obsoleta** — descreve código que não existe
+> mais. Mantida só como registro histórico; não é mais fonte de verdade.
+
+- ✅ 🗑️ **Removidos (57 arquivos) — 2026-08-05.** Pasta `blog-backend/` inteira
+  (sidecar Node/Bun + binários compilados de 62 MB + `wp-plugin/`); `src/
+  components/blog/` (BlogPanel + ToastHost + 8 views); `src/lib/blogClient.ts`,
+  `src/lib/blogNav.ts`, `src/lib/toast.ts`, `src/types/blog.ts`;
+  `src-tauri/src/blog_sidecar.rs`; migrations `20260702000001_blog_ai_usage.sql`
+  e `20260704000001_blog_notificacoes.sql`; `src-tauri/.taurignore`; e os
+  artefatos de dev do sidecar (`src-tauri/data/` com `magnific_token.json` +
+  `settings.json`, e `src-tauri/.env` com a service_role — **segredos apagados
+  junto**).
+- ✅ ✨ **Integração no app principal desfeita — 2026-08-05.**
+  `DashboardScreen.tsx`: removidos o botão "Blog" no header, o estado
+  `blogOpen`/`blogStarting`, o `handleOpenBlog` (spawn do sidecar) e o
+  `<BlogPanel/>`. `src-tauri/src/lib.rs`: removidos `mod blog_sidecar` + `use`,
+  `.plugin(tauri_plugin_shell::init())`, `.manage(BlogSidecarState::new())`, os
+  commands `blog_sidecar_start_lazy`/`blog_sidecar_status` e `write_file_bytes`
+  (só o Blog usava — `read_file_bytes` fica, é dos anexos) do
+  `generate_handler!`, e o arm `RunEvent::ExitRequested` (só matava o sidecar);
+  o param da closure `run` virou `_app_handle` (só o `Reopen` do macOS usa).
+- ✅ ✨ **Deps e permissões enxugadas — 2026-08-05.** `Cargo.toml`: fora
+  `tauri-plugin-shell` e `tokio` (ambos só do sidecar). `tauri.conf.json`: fora
+  `bundle.externalBin` e `bundle.resources` (apontavam pro sidecar/vendor).
+  `capabilities/default.json`: fora `shell:allow-execute` (scoped ao
+  `tng-blog-sidecar`) e `shell:allow-kill`. Mantidos `dialog:default` e o
+  plugin-dialog (usados pelo picker de anexos em `lib/attachments.ts`).
+- ⚠️ **Pendências fora do repo (decisão do usuário):**
+  - **Tabelas `blog.*` no Supabase** (`blog.sites`, `blog.historico`,
+    `blog.agendamentos`, `blog.ai_usage`, `blog.notificacoes`) continuam
+    existindo — as migrations sumiram do repo mas o schema no banco não. Se
+    quiser zerar de vez, dropar o schema `blog` manualmente no dashboard.
+  - **App Python original** em `../Blog - TNG Digital/` (fora deste repo, sem
+    versionamento git) segue no disco — remover à parte se quiser.
+
+---
+
+## `.heic` (fotos de iPhone) nos anexos + release v0.2.8 — 2026-08-17
+
+- ✅ ✨ **Anexos aceitam `.heic`/`.heif` (formato padrão do iPhone/iOS) — 2026-08-17.**
+  Antes, foto de iPhone era rejeitada ("Tipo não suportado"). A validação é
+  centralizada em `src/lib/attachments.ts`, então **uma** mudança cobre TODOS os
+  pontos de entrada (janela de captura, drawer da demanda, colar `Ctrl/Cmd+V` e
+  drag-drop do SO — todos passam por `buildPendingAttachment` / `resolveMime` /
+  `readPathsAsFiles`). Mudanças: `image/heic` e `image/heif` no
+  `ALLOWED_MIME_TYPES`; `heic`/`heif` no `EXTENSION_FALLBACK` (essencial pro picker
+  nativo, que define o MIME só pela extensão via `readPathsAsFiles`); e
+  `maybeCompressImage` PULA HEIC (o `<canvas>` do Chromium/WebView2 não decodifica
+  HEIC — a compressão falharia; mantém o original). A Edge Function `extract-demand`
+  não filtra MIME de imagem, então repassa `image/heic` direto pro Gemini (que
+  suporta HEIC) — sem mudança lá.
+  ⚠️ **Limitação de prévia:** HEIC renderiza em `<img>` no macOS (WKWebView) mas
+  **não** no Windows (WebView2/Chromium não decodifica HEIC) — no Windows a foto
+  sobe e é baixável, mas a prévia fica quebrada. Solução completa (converter
+  HEIC→JPEG no cliente via `heic2any`/libheif) ficou como follow-up, não pedida.
+- ✅ 🧹 **`release.yml` limpo do blog — 2026-08-17.** Removidos os passos de build do
+  sidecar do Blog (Setup Bun + `bun install` + `build:*`) — o app não empacota mais
+  o sidecar (`externalBin`/`resources` saíram do `tauri.conf.json` na remoção do
+  blog), então esses passos eram inúteis e um risco de falha na release.
+- ✅ ✨ **Release v0.2.8 — 2026-08-17.** Primeira release que **carrega a remoção do
+  Blog do app principal** (botão + sidecar + plugin shell/tokio + capabilities — ver
+  "Blog REMOVIDO") **junto** com o suporte a `.heic`. Bump 0.2.7 → 0.2.8 em
+  package.json + tauri.conf.json + Cargo.toml + Cargo.lock.
+  **Nota:** os ARQUIVOS-fonte do blog (`blog-backend/`, `src/components/blog/`)
+  foram restaurados no repo (a integração continua removida) porque serão copiados
+  pra versão online do blog numa outra sessão — por isso ainda aparecem no repo,
+  mas o app não os usa nem empacota.
+
+---
+
 ## App principal — devtools + anexos — 2026-07-10
 
 Primeira leva de mudanças no **app principal** (fora do módulo Blog) desde as
