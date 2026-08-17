@@ -121,6 +121,34 @@ momento do upload** — o anexo guardado é JPEG, que abre em qualquer WebView
 
 ---
 
+## HEIC não convertia no Windows — faltava `'unsafe-eval'` no CSP + v0.2.10 — 2026-08-17
+
+Teste real da v0.2.9 no Windows: a foto de iPhone anexou, mas subiu como `.heic` e
+abriu como `.heic` no viewer (prévia quebrada no WebView2). A conversão da v0.2.9
+**caía no fallback** (o `try/catch` do `maybeConvertHeic` devolvia o original).
+
+**Diagnóstico (na fonte, não chute):** o `heic2any` instancia o libheif (asm.js)
+via **`new Function(...)`** (3 ocorrências no dist; 0 de `WebAssembly` — é asm.js
+mesmo). O `script-src` do app era `'self' 'unsafe-inline'` **sem `'unsafe-eval'`**,
+então o WebView2 (Chromium/Windows) barra o `new Function` com `EvalError` → o
+`heic2any` lança → fallback pro HEIC. (No macOS/WKWebView a checagem de eval é mais
+frouxa, por isso lá tendia a funcionar.) `'wasm-unsafe-eval'` NÃO resolveria — é
+asm.js com `new Function`, precisa do `'unsafe-eval'` completo.
+
+- ✅ 🐛 **`'unsafe-eval'` adicionado ao `script-src` (`tauri.conf.json`) — 2026-08-17.**
+  `script-src 'self' 'unsafe-inline'` → `... 'unsafe-inline' 'unsafe-eval'`. Libera o
+  `new Function` do libheif → a conversão HEIC→JPEG passa a rodar no Windows.
+  **Nota de segurança:** o CSP já tinha `'unsafe-inline'` (Vite exige), então o
+  incremento de risco do `'unsafe-eval'` é pequeno; a proteção real contra XSS segue
+  sendo o DOMPurify no HTML de comentários/descrição. Nenhum código do app usa eval —
+  é só pra o libheif do heic2any.
+- ✅ ✨ **Bump 0.2.9 → 0.2.10 — 2026-08-17.** Sem mudança de JS/Rust; só o CSP +
+  versão. A lógica de conversão (v0.2.9) já estava correta — só não conseguia
+  executar. Validar no Windows: anexar `.heic` na captura E no drawer → vira `.jpg`
+  e abre a prévia.
+
+---
+
 ## App principal — devtools + anexos — 2026-07-10
 
 Primeira leva de mudanças no **app principal** (fora do módulo Blog) desde as
